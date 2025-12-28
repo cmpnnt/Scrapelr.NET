@@ -1,17 +1,41 @@
+using System.Threading.Channels;
 using PuppeteerSharp;
+using Scrapelr.NET.Extensions;
 
 namespace Scrapelr.NET;
 
 public class Collector
 {
-    public static async Task<string[]?> Collect(IBrowser browser, string uri, bool subPathsOnly = true)
+    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<string?> writer,
+        bool subPathsOnly = true, bool follow = true, int maxDepth = 3)
+    {
+        HashSet<string> urlSet = [];
+        Queue<string> urls = new();
+        string leftPart = LeftPart(uri);
+        urls.Enqueue(leftPart);
+        urlSet.Add(leftPart);
+        
+        /* TODO: Figure out how to calculate the max depth. This is tricky because it's exponentially
+           generating links, and each set of links from each sibling page is at the same level. */
+        var currentDepth = 0;
+
+        while (follow && urls.Count > 0)
+        {
+            string[] scrapedUris = await GetLinks(browser, urls.Dequeue(), writer, subPathsOnly);
+            urls.EnqueueRange(scrapedUris, urlSet);
+        }
+        writer.Complete();
+    }
+
+    #region private
+    private static async Task<string[]> GetLinks(IBrowser browser, string uri, ChannelWriter<string?> writer, 
+        bool subPathsOnly = true)
     {
         await using IPage? page = await browser.NewPageAsync();
         
-        await page.SetRequestInterceptionAsync(true);
-        
         var root = new Uri(LeftPart(uri));
         
+        await page.SetRequestInterceptionAsync(true);
         page.Request += async (_, e) =>
         {
             // Ensure valid URI
@@ -38,23 +62,15 @@ public class Collector
         const string jsSelectAllAnchors = @"Array.from(document.querySelectorAll('a')).map(a => a.href);";
         string[]? urls = await page.EvaluateExpressionAsync<string[]>(jsSelectAllAnchors);
 
-        if (urls == null) return urls;
+        if (urls == null) return [];
         
-        var distinctUrls = new HashSet<string>();
-
-        // Remove duplicate URLs by normalizing URLs without fragments and query strings
-        foreach (string u in urls)
-        {
-            if (!Uri.TryCreate(u, UriKind.Absolute, out Uri? url)) continue;
-            
-            string normalized = url.GetLeftPart(UriPartial.Path);
-
-            // Don't add paths that aren't subpaths when subPathsOnly is true
-            if (!subPathsOnly || IsSubPath(root, new Uri(normalized)))
-            {
-                distinctUrls.Add(normalized);
-            }
-        }
+        HashSet<string> distinctUrls = DistinctUris(urls, root, subPathsOnly);
+        
+        /* TODO: The URL uniqueness algorithm is working, but this call is adding all of the matching
+        links on a page and they're being written once for each page this is parsing. So, we can't just
+        pass in the links on each page here. These need to be deduplicate, too. */
+        await writer.WriteAllAsync(distinctUrls);
+        
         return distinctUrls.ToArray();
     }
 
@@ -84,4 +100,25 @@ public class Collector
         Uri uri = new(url);
         return uri.GetLeftPart(UriPartial.Path); 
     }
+
+    private static HashSet<string> DistinctUris(string[] urls, Uri root, bool subPathsOnly)
+    {
+        var distinctUrls = new HashSet<string>();
+
+        // Remove duplicate URLs by normalizing URLs without fragments and query strings
+        foreach (string u in urls)
+        {
+            if (!Uri.TryCreate(u, UriKind.Absolute, out Uri? url)) continue;
+            
+            string normalized = url.GetLeftPart(UriPartial.Path);
+
+            // Don't add paths that aren't subpaths when subPathsOnly is true
+            if (!subPathsOnly || IsSubPath(root, new Uri(normalized)))
+            {
+                distinctUrls.Add(normalized);
+            }
+        }
+        return distinctUrls;
+    }
+    #endregion
 }

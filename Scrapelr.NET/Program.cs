@@ -1,19 +1,35 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
+using System.Threading.Channels;
 using PuppeteerSharp;
 using Scrapelr.NET;
 
 await using IBrowser browser = await Collector.Setup();
 const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
-string[]? urls = await Collector.Collect(browser, uri);
+var channel = Channel.CreateUnbounded<string?>();
 
-if (urls is not null)
+Collector.Collect(browser, uri, channel.Writer);
+ChannelReader<string?> reader = channel.Reader;
+
+List<Task> tasks = [];
+
+while (await reader.WaitToReadAsync())
 {
-    foreach (string url in urls)
+    while (reader.TryRead(out string? url))
     {
-        Console.WriteLine(url);
+        Task t =  Task.Run(() =>
+        {
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                Processor.Process(url, browser);
+            }
+        });
+        
+        tasks.Add(t);
     }
 }
+
+await Task.WhenAll(tasks);
 
 /* TODO:
  1. channels and a thread pool for the parsing of each new URI in the queue
