@@ -3,23 +3,24 @@
 using System.Threading.Channels;
 using PuppeteerSharp;
 using Scrapelr.NET;
+using Scrapelr.NET.Link;
 
 await using IBrowser browser = await Collector.Setup();
 const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
-var channel = Channel.CreateUnbounded<string?>();
+var channel = Channel.CreateUnbounded<Node>();
 
 Collector.Collect(browser, uri, channel.Writer);
-ChannelReader<string?> reader = channel.Reader;
+ChannelReader<Node> reader = channel.Reader;
 
 List<Task> tasks = [];
 
 while (await reader.WaitToReadAsync())
 {
-    while (reader.TryRead(out string? url))
+    while (reader.TryRead(out Node url))
     {
         Task t =  Task.Run(() =>
         {
-            if (!string.IsNullOrWhiteSpace(url))
+            if (!string.IsNullOrWhiteSpace(url.Url))
             {
                 Processor.Process(url, browser);
             }
@@ -33,7 +34,4 @@ await Task.WhenAll(tasks);
 
 /* TODO:
  1. channels and a thread pool for the parsing of each new URI in the queue
- 2. add the results of Collector.Collect to a queue
- 3. add ordering for the URLs to ensure that the PDFs are rendered in the same order the URLs were added to the queue
-    - When all the parsing is done, sort the dictionary by the index and then stitch all the PDFs together
 */

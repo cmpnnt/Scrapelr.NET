@@ -1,14 +1,21 @@
-using System;
-using System.Threading.Channels;
 using PuppeteerSharp;
+using Scrapelr.NET.Link;
 
 namespace Scrapelr.NET;
 
+/// <summary>
+/// 
+/// </summary>
 public class Processor
 {
     // TODO: Wrap this in a Task.Run, probably in Program.cs, and then figure out how to 
     // move it into this file. Probably as a "fire and forget" method that gets called in Program.cs
-    public static void Process(string url, IBrowser browser)
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="url"></param>
+    /// <param name="browser"></param>
+    public static void Process(Node url, IBrowser browser)
     {
         // IPage? page = await browser.NewPageAsync();
         // await page.GoToAsync("http://www.google.com");
