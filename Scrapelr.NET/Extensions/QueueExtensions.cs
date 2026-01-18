@@ -1,10 +1,12 @@
+using Scrapelr.NET.Link;
+
 namespace Scrapelr.NET.Extensions;
 
 public static class QueueExtensions
 {
-    public static void EnqueueRange<T>(this Queue<T> queue, ISet<T> items, HashSet<T> set)
+    public static void EnqueueRange(this Queue<Node> queue, ISet<Node> items, HashSet<Node> set)
     {
-        foreach (T item in items)
+        foreach (Node item in items)
         {
             if (!set.Add(item)) continue;
             queue.Enqueue(item);

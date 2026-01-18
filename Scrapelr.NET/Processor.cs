@@ -17,6 +17,9 @@ public class Processor
     /// <param name="browser"></param>
     public static void Process(Node url, IBrowser browser)
     {
+        
+        // TODO: Consider using an object pool somewhere to reduce the creation of page objects
+        
         // IPage? page = await browser.NewPageAsync();
         // await page.GoToAsync("http://www.google.com");
         

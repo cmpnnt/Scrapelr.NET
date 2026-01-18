@@ -21,12 +21,14 @@ public class Collector
         /*  TODO: Implement the `pathOnly` logic to only pick up child paths of the starting URL.
             It's currently all screwed up. */
         
-        // Concurrency: If you plan to make this multithreaded, swap Queue<T> for ConcurrentQueue<T>
-        // and HashSet<T> for ConcurrentDictionary<T, byte>.
+        /* Concurrency: If you plan to make this multithreaded, swap Queue<T> for ConcurrentQueue<T>
+           and HashSet<T> for ConcurrentDictionary<T, byte>. However, I don't think the link collection
+           process will be concurrent or multithreaded. */
         HashSet<Node> urlSet = new HashSet<Node>(new Comparer());
         Queue<Node> urls = new();
+        var orderCounter = 0;
         
-        Node leftPart = LeftPart(uri, 0);
+        Node leftPart = LeftPart(uri, 0, orderCounter++);
         urls.Enqueue(leftPart);
         urlSet.Add(leftPart);
         
@@ -40,7 +42,9 @@ public class Collector
                 continue;
             }
             
-            HashSet<Node> scrapedUris = await GetLinks(browser, node, writer, urlSet);
+            (HashSet<Node> scrapedUris, int newOrder) = await GetLinks(browser, node, writer, urlSet, orderCounter);
+            orderCounter = newOrder;
+            
             urls.EnqueueRange(scrapedUris, urlSet);
         }
         writer.Complete();
@@ -55,66 +59,36 @@ public class Collector
     /// <param name="uri"></param>
     /// <param name="writer"></param>
     /// <param name="urlSet"></param>
+    /// <param name="orderCounter"></param>
     /// <param name="domainOnly"></param>
     /// <param name="pathOnly"></param>
     /// <returns></returns>
-    private static async Task<HashSet<Node>> GetLinks(IBrowser browser, Node uri, ChannelWriter<Node> writer, 
-        HashSet<Node> urlSet, bool domainOnly = true, bool pathOnly = true)
+    private static async Task<(HashSet<Node>, int)> GetLinks(IBrowser browser, Node uri, ChannelWriter<Node> writer,
+        HashSet<Node> urlSet, int orderCounter, bool domainOnly = true, bool pathOnly = true)
     {
         await using IPage? page = await browser.NewPageAsync();
         
-        var root = new Uri(LeftPart(uri.Url, 0).Url);
-        
-        await page.SetRequestInterceptionAsync(true);
-        page.Request += async (_, e) =>
-        {
-            // Ensure valid URI
-            if (!Uri.TryCreate(e.Request.Url, UriKind.Absolute, out Uri? requestUri))
-            {
-                await e.Request.AbortAsync(); 
-                return;
-            }
-
-            // Only allow requests that are children of the root
-            // This blocks external content, which we don't need to load to scrape links
-            if (IsSubPath(new Uri(root.Scheme + "://" + root.Host), requestUri))
-            {
-                await e.Request.ContinueAsync();
-            }
-            else
-            {
-                await e.Request.AbortAsync();
-            }
-        };
+        var root = new Uri(LeftPart(uri.Url, uri.Depth, uri.Order).Url);
         
         await page.GoToAsync(root.AbsoluteUri);
         
         const string jsSelectAllAnchors = @"Array.from(document.querySelectorAll('a')).map(a => a.href);";
         string[]? urls = await page.EvaluateExpressionAsync<string[]>(jsSelectAllAnchors);
 
-        if (urls == null) return [];
+        if (urls == null) return (new HashSet<Node>(new Comparer()), orderCounter);
         
-        // Normalized and deduplicate the links on the page being crawled.
-        HashSet<Node> distinctUrls;
-        if (pathOnly)
-        {
-            distinctUrls = DistinctUris(urls, urlSet.FirstOrDefault().Depth + 1, root, true, true);
-        }
-        else if (domainOnly)
-        {
-            distinctUrls = DistinctUris(urls, urlSet.FirstOrDefault().Depth + 1, root, false, true);
-        }
-        else
-        {
-            distinctUrls = DistinctUris(urls, urlSet.FirstOrDefault().Depth + 1, root, false, false);
-        }
-        
+        bool followPaths = pathOnly;
+        bool followDomain = pathOnly || domainOnly; // Because pathOnly implies domainOnly
+
+        int depth = urlSet.FirstOrDefault().Depth + 1;
+        (HashSet<Node> distinctUrls, int newOrder) = DistinctUris(urls, depth, orderCounter, root, followPaths, followDomain);
+
         // Add unique elements of both to distinctNodes
         distinctUrls.SymmetricExceptWith(urlSet);
-        
+
         await writer.WriteAllAsync(distinctUrls);
 
-        return distinctUrls;
+        return (distinctUrls, newOrder);
     }
 
     /// <summary>
@@ -180,11 +154,12 @@ public class Collector
     /// </summary>
     /// <param name="url">The URL whose left part to return.</param>
     /// <param name="depth">The number of the current link in the crawl chain.</param>
+    /// <param name="order"></param>
     /// <returns>The parsed left part of the given URL.</returns>
-    private static Node LeftPart(string url, int depth)
+    private static Node LeftPart(string url, int depth, int order)
     {
         Uri uri = new(url);
-        return new Node(uri.GetLeftPart(UriPartial.Path), depth); 
+        return new Node(uri.GetLeftPart(UriPartial.Path), depth, order); 
     }
 
     /// <summary>
@@ -193,11 +168,12 @@ public class Collector
     /// </summary>
     /// <param name="urls">A string array of URLs to normalize.</param>
     /// <param name="depth">An integer counting how many links in this chain have been followed from the starting page.</param>
+    /// <param name="orderCounter"></param>
     /// <param name="root">If populated, results are limited to URLs that match this base.</param>
     /// <param name="pathOnly"></param>
     /// <param name="domainOnly"></param>
     /// <returns>A HashSet of deduplicated and normalized URLs, limited to those that match the <paramref name="root"/>, if populated.</returns>
-    private static HashSet<Node> DistinctUris(string[] urls, int depth, Uri? root = null, bool pathOnly = true, bool domainOnly = true)
+    private static (HashSet<Node>, int) DistinctUris(string[] urls, int depth, int orderCounter, Uri? root = null, bool pathOnly = true, bool domainOnly = true)
     {
         var distinctNodes = new HashSet<Node>(new Comparer());
 
@@ -214,29 +190,27 @@ public class Collector
                Note: pathOnly implies domainOnly, and domainOnly can't be false if pathOnly is true. Similarly,
                pathOnly takes precedence over domainOnly. This should be minimally handled here to prevent crashes
                and should be explicitly rejected in the command line if the user provides incorrect args. */
-            if (root is null || !IsSubPath(root, new Uri(normalized))) continue;
             
-            Node node = new(normalized, depth);
+            // TODO: Figure out whether "root is null" is necessary
+            
+            /* TODO: Figure out why IsInDomain behaves the way it does. Passing in:
+               https://learn.microsoft.com/en-us/dotnet/core/containers/overview 
+               will include 
+               https://learn.microsoft.com/en-us/dotnet/core/containers/sdk-publish
+               https://learn.microsoft.com/en-us/dotnet/core/containers/publish-configuration 
+               
+               but it should only include /overview and subpaths of /overview.
+               
+               SOLVED: It's because the if statement below currently uses IsInDomain. Changing it to IsSubPath only includes
+               the /overview page because there are no subpages of /overview. 
+               TODO: Implement the logic to choose path vs domain
+               */
+            if (root is null || !IsInDomain(root, new Uri(normalized))) continue;
+            
+            Node node = new(normalized, depth, orderCounter++);
             distinctNodes.Add(node);
         }
-        return distinctNodes;
-    }
-
-    /// <summary>
-    /// Creates a HashSet of Node structs from a HashSet of strings representing URLs.
-    /// </summary>
-    /// <param name="urls">An array of strings representing URLs.</param>
-    /// <param name="depth">An integer counting how many links in this chain have been followed from the starting page.</param>
-    /// <returns>A HashSet of Nodes from the url string array.</returns>
-    private static HashSet<Node> CreateNodes(HashSet<string> urls, int depth)
-    {
-        var nodes = new HashSet<Node>(new Comparer());
-        foreach (string url in urls)
-        {
-            Node node = new(url, depth);
-            nodes.Add(node);
-        }
-        return nodes;
+        return (distinctNodes, orderCounter);
     }
     #endregion
 }

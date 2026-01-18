@@ -6,6 +6,12 @@ using Scrapelr.NET;
 using Scrapelr.NET.Link;
 
 await using IBrowser browser = await Collector.Setup();
+
+/* TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
+ This will be false by default, and will be PathOnly by default. You can specify otherwise. So, if
+ you provide a text file with a list of URLs and no other flags, it'll just give you a PDF with 
+ those pages. */
+
 const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
 var channel = Channel.CreateUnbounded<Node>();
 
