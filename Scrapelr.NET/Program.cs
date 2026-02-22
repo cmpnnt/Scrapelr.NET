@@ -7,36 +7,29 @@ using Scrapelr.NET.Link;
 
 await using IBrowser browser = await Collector.Setup();
 
-/* TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
- This will be false by default, and will be PathOnly by default. You can specify otherwise. So, if
- you provide a text file with a list of URLs and no other flags, it'll just give you a PDF with 
- those pages. */
-
 const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
 var channel = Channel.CreateUnbounded<Node>();
 
-Collector.Collect(browser, uri, channel.Writer);
+/*
+ * --root, -r
+ * --pathOnly, -p (Default: true. `true` implies `domainOnly = true`, it's an error to set `domainOnly = false` if `pathOnly = true`)
+ * --domainOnly, -d (Default: true)
+ * --inputFile, -i
+ * --outputFile -o (mandatory, error if not set)
+ * --maxDepth -m (default 3)
+ */
+// The two spinners shown by SpectreConsole will be "Crawling..." and "Creating PDF..."
+
+/* TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
+ This will be false by default, and will be PathOnly by default. You can specify otherwise. So, if
+ you provide a text file with a list of URLs and no other flags, it'll just give you a PDF with
+ those pages. */
+
+_ = Collector.Collect(browser, uri, channel.Writer, domainOnly: true, pathOnly: true);
+
 ChannelReader<Node> reader = channel.Reader;
-
-List<Task> tasks = [];
-
-while (await reader.WaitToReadAsync())
-{
-    while (reader.TryRead(out Node url))
-    {
-        Task t =  Task.Run(() =>
-        {
-            if (!string.IsNullOrWhiteSpace(url.Url))
-            {
-                Processor.Process(url, browser);
-            }
-        });
-        
-        tasks.Add(t);
-    }
-}
-
-await Task.WhenAll(tasks);
+var processor = new Processor(browser, reader);
+await processor.Process();
 
 /* TODO:
  1. channels and a thread pool for the parsing of each new URI in the queue

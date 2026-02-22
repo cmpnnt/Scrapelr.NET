@@ -5,7 +5,7 @@ using Scrapelr.NET.Link;
 
 namespace Scrapelr.NET;
 
-public class Collector
+public static class Collector
 {
     /// <summary>
     /// 
@@ -14,7 +14,9 @@ public class Collector
     /// <param name="uri"></param>
     /// <param name="writer"></param>
     /// <param name="maxDepth"></param>
-    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 3)
+    /// <param name="domainOnly"></param>
+    /// <param name="pathOnly"></param>
+    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 3, bool domainOnly = true, bool pathOnly = true)
     {
         
         // TODO: Implement the `domainOnly` logic to stay inside the current domain
@@ -42,7 +44,7 @@ public class Collector
                 continue;
             }
             
-            (HashSet<Node> scrapedUris, int newOrder) = await GetLinks(browser, node, writer, urlSet, orderCounter);
+            (HashSet<Node> scrapedUris, int newOrder) = await GetLinks(browser, node, writer, urlSet, orderCounter, domainOnly, pathOnly);
             orderCounter = newOrder;
             
             urls.EnqueueRange(scrapedUris, urlSet);
@@ -77,11 +79,11 @@ public class Collector
 
         if (urls == null) return (new HashSet<Node>(new Comparer()), orderCounter);
         
-        bool followPaths = pathOnly;
         bool followDomain = pathOnly || domainOnly; // Because pathOnly implies domainOnly
+        bool followPaths = pathOnly;
 
         int depth = urlSet.FirstOrDefault().Depth + 1;
-        (HashSet<Node> distinctUrls, int newOrder) = DistinctUris(urls, depth, orderCounter, root, followPaths, followDomain);
+        (HashSet<Node> distinctUrls, int newOrder) = DistinctUris(urls, depth, orderCounter, root, followDomain, followPaths);
 
         // Add unique elements of both to distinctNodes
         distinctUrls.SymmetricExceptWith(urlSet);
@@ -170,10 +172,10 @@ public class Collector
     /// <param name="depth">An integer counting how many links in this chain have been followed from the starting page.</param>
     /// <param name="orderCounter"></param>
     /// <param name="root">If populated, results are limited to URLs that match this base.</param>
-    /// <param name="pathOnly"></param>
     /// <param name="domainOnly"></param>
+    /// <param name="pathOnly"></param>
     /// <returns>A HashSet of deduplicated and normalized URLs, limited to those that match the <paramref name="root"/>, if populated.</returns>
-    private static (HashSet<Node>, int) DistinctUris(string[] urls, int depth, int orderCounter, Uri? root = null, bool pathOnly = true, bool domainOnly = true)
+    private static (HashSet<Node>, int) DistinctUris(string[] urls, int depth, int orderCounter, Uri? root = null, bool domainOnly = true, bool pathOnly = true)
     {
         var distinctNodes = new HashSet<Node>(new Comparer());
 
@@ -191,21 +193,9 @@ public class Collector
                pathOnly takes precedence over domainOnly. This should be minimally handled here to prevent crashes
                and should be explicitly rejected in the command line if the user provides incorrect args. */
             
-            // TODO: Figure out whether "root is null" is necessary
-            
-            /* TODO: Figure out why IsInDomain behaves the way it does. Passing in:
-               https://learn.microsoft.com/en-us/dotnet/core/containers/overview 
-               will include 
-               https://learn.microsoft.com/en-us/dotnet/core/containers/sdk-publish
-               https://learn.microsoft.com/en-us/dotnet/core/containers/publish-configuration 
-               
-               but it should only include /overview and subpaths of /overview.
-               
-               SOLVED: It's because the if statement below currently uses IsInDomain. Changing it to IsSubPath only includes
-               the /overview page because there are no subpages of /overview. 
-               TODO: Implement the logic to choose path vs domain
-               */
-            if (root is null || !IsInDomain(root, new Uri(normalized))) continue;
+            if (root is null) continue;
+            if (domainOnly && !IsInDomain(root, new Uri(normalized))) continue;
+            if (pathOnly && !IsSubPath(root, new Uri(normalized))) continue;
             
             Node node = new(normalized, depth, orderCounter++);
             distinctNodes.Add(node);
