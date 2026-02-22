@@ -19,7 +19,6 @@ public static class Collector
     public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 3, bool domainOnly = true, bool pathOnly = true)
     {
         
-        // TODO: Implement the `domainOnly` logic to stay inside the current domain
         /*  TODO: Implement the `pathOnly` logic to only pick up child paths of the starting URL.
             It's currently all screwed up. */
         
@@ -187,12 +186,6 @@ public static class Collector
             string normalized = url.GetLeftPart(UriPartial.Path);
 
             // When root is populated, only add subpaths of the root
-            /* TODO: The `domainOnly` and `pathOnly` logic needs to be updated here with some Uri parsing based on
-               the values of domainOnly and pathOnly passed in here. See: IsSubPath and IsInDomain.
-               Note: pathOnly implies domainOnly, and domainOnly can't be false if pathOnly is true. Similarly,
-               pathOnly takes precedence over domainOnly. This should be minimally handled here to prevent crashes
-               and should be explicitly rejected in the command line if the user provides incorrect args. */
-            
             if (root is null) continue;
             if (domainOnly && !IsInDomain(root, new Uri(normalized))) continue;
             if (pathOnly && !IsSubPath(root, new Uri(normalized))) continue;

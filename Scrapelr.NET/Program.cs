@@ -30,7 +30,3 @@ _ = Collector.Collect(browser, uri, channel.Writer, domainOnly: true, pathOnly: 
 ChannelReader<Node> reader = channel.Reader;
 var processor = new Processor(browser, reader);
 await processor.Process();
-
-/* TODO:
- 1. channels and a thread pool for the parsing of each new URI in the queue
-*/

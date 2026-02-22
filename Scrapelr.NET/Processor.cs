@@ -23,8 +23,6 @@ public class Processor
         _reader = reader;
     }
     
-    // TODO: Wrap this in a Task.Run, probably in Program.cs, and then figure out how to 
-    // move it into this file. Probably as a "fire and forget" method that gets called in Program.cs
     /// <summary>
     /// 
     /// </summary>
