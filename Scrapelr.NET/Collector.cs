@@ -5,10 +5,13 @@ using Scrapelr.NET.Link;
 
 namespace Scrapelr.NET;
 
+// TODO: Convert collector to a regular class.
+// Move all of the options into an options class that is accepted in the constructor?
 public static class Collector
 {
     /// <summary>
-    /// 
+    /// Given a starting URL, crawls a website according to the specified parameters, writing collected links to a ChannelWriter
+    /// to be read by a processor and saved as PDF files. 
     /// </summary>
     /// <param name="browser"></param>
     /// <param name="uri"></param>
@@ -16,16 +19,13 @@ public static class Collector
     /// <param name="maxDepth"></param>
     /// <param name="domainOnly"></param>
     /// <param name="pathOnly"></param>
-    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 3, bool domainOnly = true, bool pathOnly = true)
+    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 1, bool domainOnly = true, bool pathOnly = true)
     {
-        
-        /*  TODO: Implement the `pathOnly` logic to only pick up child paths of the starting URL.
-            It's currently all screwed up. */
         
         /* Concurrency: If you plan to make this multithreaded, swap Queue<T> for ConcurrentQueue<T>
            and HashSet<T> for ConcurrentDictionary<T, byte>. However, I don't think the link collection
            process will be concurrent or multithreaded. */
-        HashSet<Node> urlSet = new HashSet<Node>(new Comparer());
+        var urlSet = new HashSet<Node>(new Comparer());
         Queue<Node> urls = new();
         var orderCounter = 0;
         
@@ -52,7 +52,6 @@ public static class Collector
     }
 
     #region private
-
     /// <summary>
     /// 
     /// </summary>
@@ -107,20 +106,16 @@ public static class Collector
         return browser;
     }
 
-    /// <summary>
-    /// Determines whether a <paramref name="childUri"/> is in the same domain as <paramref name="parentUri"/>.
-    /// </summary>
-    /// <param name="parentUri">The URI to be compared against.</param>
-    /// <param name="childUri">The URI to be compared.</param>
-    /// <returns>True if <paramref name="childUri"/> is a sub path of <paramref name="parentUri"/>.</returns>
     private static bool IsInDomain(Uri parentUri, Uri childUri)
     {
         if (!parentUri.IsAbsoluteUri || !childUri.IsAbsoluteUri)
         {
             return false;
         }
-        
-        return parentUri.IsBaseOf(childUri);
+
+        return parentUri.Scheme == childUri.Scheme &&
+               parentUri.Host == childUri.Host &&
+               parentUri.Port == childUri.Port;
     }
     
     /// <summary>
@@ -131,22 +126,17 @@ public static class Collector
     /// <returns>True if <paramref name="childUri"/> is a sub path of <paramref name="parentUri"/>.</returns>
     private static bool IsSubPath(Uri parentUri, Uri childUri)
     {
-        if (!parentUri.IsAbsoluteUri || !childUri.IsAbsoluteUri)
-            return false;
-        
-        if (parentUri.Scheme != childUri.Scheme ||
-            parentUri.Host != childUri.Host ||
-            parentUri.Port != childUri.Port)
+        if (!IsInDomain(parentUri, childUri))
         {
             return false;
         }
         
         string parentPath = parentUri.AbsolutePath;
-        string normalizedParent = parentPath.EndsWith("/") ? parentPath : parentPath + "/";
+        string normalizedParent = parentPath.EndsWith('/') ? parentPath : parentPath + "/";
         string childPath = childUri.AbsolutePath;
+        string normalizedChild = childPath.EndsWith('/') ? childPath : childPath + "/";
         
-        return childPath.Equals(parentPath, StringComparison.OrdinalIgnoreCase) ||
-               childPath.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
+        return normalizedChild.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -195,5 +185,28 @@ public static class Collector
         }
         return (distinctNodes, orderCounter);
     }
+    
+    private static bool IsFilePath(string input)
+    {
+        if (Uri.TryCreate(input, UriKind.Absolute, out Uri? uriResult))
+        {
+            if (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps)
+            {
+                return false;
+            }
+            if (uriResult.IsFile)
+            {
+                return true;
+            }
+        }
+        else if (Path.IsPathRooted(input))
+        {
+            // Handles paths like "C:\Users\..." that might not be formatted as URIs
+            return true;
+        }
+
+        return false;
+    }
+    
     #endregion
 }
