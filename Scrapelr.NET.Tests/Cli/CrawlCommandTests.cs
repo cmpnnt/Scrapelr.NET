@@ -108,6 +108,51 @@ public class CrawlCommandTests
     }
 
     [Test]
+    [Arguments("-f")]
+    [Arguments("--format")]
+    public async Task Format_Binds(string option)
+    {
+        Result result = await Invoke("-r", Root, "-o", "site.txt", option, "markdown");
+
+        await Assert.That(result.Settings!.Format).IsEqualTo("markdown");
+        await Assert.That(result.Settings.EffectiveFormat).IsEqualTo(OutputFormat.Markdown);
+    }
+
+    [Test]
+    public async Task Format_OmittedWithMarkdownOutput_IsMarkdown()
+    {
+        Result result = await Invoke("-r", Root, "-o", "site.md");
+
+        await Assert.That(result.Settings!.Format).IsNull();
+        await Assert.That(result.Settings.CreateOutputFormat()).IsTypeOf<MarkdownOutputFormat>();
+    }
+
+    [Test]
+    public async Task Format_ExplicitPdf_OverridesMarkdownExtension()
+    {
+        Result result = await Invoke("-r", Root, "-o", "site.md", "-f", "pdf");
+
+        await Assert.That(result.Settings!.CreateOutputFormat()).IsTypeOf<PdfOutputFormat>();
+    }
+
+    [Test]
+    public async Task FullPage_Binds()
+    {
+        Result result = await Invoke("-r", Root, "-o", "site.md", "--fullPage");
+
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+        await Assert.That(result.Settings!.FullPage).IsTrue();
+    }
+
+    [Test]
+    public async Task FullPage_DefaultsToFalse()
+    {
+        Result result = await Invoke("-r", Root, "-o", "site.md");
+
+        await Assert.That(result.Settings!.FullPage).IsFalse();
+    }
+
+    [Test]
     public async Task OmittedOptions_UseDefaults()
     {
         Result result = await Invoke("-r", Root, "-o", "out.pdf");
@@ -159,7 +204,7 @@ public class CrawlCommandTests
 
         await Assert.That(result.ExitCode).IsEqualTo(0);
         await Assert.That(result.Settings).IsNull();
-        foreach (string option in new[] { "--root", "--inputFile", "--outputFile", "--maxDepth", "--pathOnly", "--domainOnly" })
+        foreach (string option in new[] { "--root", "--inputFile", "--outputFile", "--format", "--fullPage", "--maxDepth", "--pathOnly", "--domainOnly" })
         {
             await Assert.That(result.Output).Contains(option);
         }
@@ -176,6 +221,9 @@ public class CrawlCommandTests
     [Arguments($"-r {Root} -o out.pdf -m -1", "--maxDepth can't be negative.")]
     [Arguments($"-r {Root} -o out.pdf -d false", "--domainOnly can't be false while --pathOnly is true.")]
     [Arguments("-r ftp://example.com/ -o out.pdf", "--root must be an absolute http or https URL")]
+    [Arguments($"-r {Root} -o out.pdf -f html", "--format must be pdf or markdown: html")]
+    [Arguments($"-r {Root} -o out.pdf -f", "Required argument missing for option: '-f'.")]
+    [Arguments($"-r {Root} -o out.pdf --fullPage", "--fullPage only applies to Markdown output.")]
     public async Task InvalidCommandLine_ReportsErrorWithoutRunning(string commandLine, string expectedError)
     {
         Result result = await Invoke(commandLine.Split(' '));

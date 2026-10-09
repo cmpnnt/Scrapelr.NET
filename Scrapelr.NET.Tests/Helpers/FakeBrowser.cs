@@ -16,6 +16,8 @@ internal sealed class FakeBrowser
     private readonly ConcurrentDictionary<string, double> _widths = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, TimeSpan> _delays = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Exception> _failures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (string Html, string Title)> _documents = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _redirects = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
     private int _openPages;
 
@@ -57,6 +59,19 @@ internal sealed class FakeBrowser
         return this;
     }
 
+    public FakeBrowser WithDocument(string url, string html, string title = "")
+    {
+        _documents[url] = (html, title);
+        return this;
+    }
+
+    /// <summary>Makes navigating to <paramref name="url"/> end up at <paramref name="finalUrl"/>.</summary>
+    public FakeBrowser WithRedirect(string url, string finalUrl)
+    {
+        _redirects[url] = finalUrl;
+        return this;
+    }
+
     public FakeBrowser WithFailure(string url, Exception? exception = null)
     {
         _failures[url] = exception ?? new NavigationException($"net::ERR_CONNECTION_REFUSED at {url}");
@@ -93,6 +108,16 @@ internal sealed class FakeBrowser
                 TestPdf.Create(path, _widths.GetValueOrDefault(current ?? "", DefaultWidth));
                 return Task.CompletedTask;
             });
+
+        page.Url.Returns(_ => current is null ? "" : _redirects.GetValueOrDefault(current, current));
+
+        page.GetContentAsync().Returns(_ => Task.FromResult(
+            current is not null && _documents.TryGetValue(current, out var document)
+                ? document.Html
+                : $"<html><head><title>{current}</title></head><body><p>{current}</p></body></html>"));
+
+        page.GetTitleAsync().Returns(_ => Task.FromResult(
+            current is not null && _documents.TryGetValue(current, out var document) ? document.Title : current ?? ""));
 
         page.DisposeAsync().Returns(_ =>
         {

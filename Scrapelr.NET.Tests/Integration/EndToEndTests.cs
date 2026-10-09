@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using PuppeteerSharp;
 using Scrapelr.NET.Cli;
 using Scrapelr.NET.Tests.Helpers;
@@ -104,7 +103,7 @@ public class EndToEndTests
         using var temp = new TempDirectory();
         await File.WriteAllLinesAsync(temp.File("urls.txt"), [site.Url("/docs/a/deep")]);
 
-        (int exitCode, _) = await RunApp(temp.FullName, "-i", "urls.txt", "-o", "deep.pdf");
+        (int exitCode, _) = await AppRunner.Run(temp.FullName, "-i", "urls.txt", "-o", "deep.pdf");
 
         await Assert.That(exitCode).IsEqualTo(0);
         await Assert.That(TestPdf.PageCount(temp.File("deep.pdf"))).IsEqualTo(1);
@@ -116,7 +115,7 @@ public class EndToEndTests
         using var site = new TestSite(Pages);
         using var temp = new TempDirectory();
 
-        (int exitCode, string stdout) = await RunApp(temp.FullName, "-r", site.Url("/docs/"), "--outputFile", "out/site.pdf");
+        (int exitCode, string stdout) = await AppRunner.Run(temp.FullName, "-r", site.Url("/docs/"), "--outputFile", "out/site.pdf");
 
         string expected = temp.File("out", "site.pdf");
         await Assert.That(exitCode).IsEqualTo(0);
@@ -134,7 +133,7 @@ public class EndToEndTests
         string output = temp.File("site.pdf");
         await File.WriteAllTextAsync(output, "stale");
 
-        (int exitCode, _) = await RunApp(temp.FullName, "-r", site.Url("/docs/"), "-o", output, "-m", "0");
+        (int exitCode, _) = await AppRunner.Run(temp.FullName, "-r", site.Url("/docs/"), "-o", output, "-m", "0");
 
         await Assert.That(exitCode).IsEqualTo(0);
         await Assert.That(TestPdf.PageCount(output)).IsEqualTo(1);
@@ -145,7 +144,7 @@ public class EndToEndTests
     {
         using var temp = new TempDirectory();
 
-        (int exitCode, string stdout) = await RunApp(temp.FullName, "-r", "http://127.0.0.1:1/");
+        (int exitCode, string stdout) = await AppRunner.Run(temp.FullName, "-r", "http://127.0.0.1:1/");
 
         await Assert.That(exitCode).IsNotEqualTo(0);
         await Assert.That(stdout).Contains("Option '--outputFile' is required.");
@@ -158,30 +157,9 @@ public class EndToEndTests
         using var temp = new TempDirectory();
         string output = temp.File("site.pdf");
 
-        (int exitCode, _) = await RunApp(temp.FullName, "-r", "http://127.0.0.1:1/", "-o", output);
+        (int exitCode, _) = await AppRunner.Run(temp.FullName, "-r", "http://127.0.0.1:1/", "-o", output);
 
         await Assert.That(exitCode).IsNotEqualTo(0);
         await Assert.That(File.Exists(output)).IsFalse();
-    }
-
-    /// <summary>
-    /// Runs the built Scrapelr.NET executable, which the project reference copies next to the tests.
-    /// </summary>
-    private static async Task<(int ExitCode, string Stdout)> RunApp(string workingDirectory, params string[] args)
-    {
-        string app = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Scrapelr.NET.exe" : "Scrapelr.NET");
-        var startInfo = new ProcessStartInfo(app, args)
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        using Process process = Process.Start(startInfo)!;
-        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
-        Task<string> stderr = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-
-        return (process.ExitCode, await stdout + await stderr);
     }
 }

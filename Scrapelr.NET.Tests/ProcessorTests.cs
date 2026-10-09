@@ -170,7 +170,7 @@ public class ProcessorTests
             browser.WithDelay(node.Url, TimeSpan.FromMilliseconds(20));
         }
 
-        await new Processor(browser.Browser, Links(nodes), maxConcurrency).Process(output);
+        await new Processor(browser.Browser, Links(nodes), maxConcurrency: maxConcurrency).Process(output);
 
         await Assert.That(browser.MaxOpenPages).IsLessThanOrEqualTo(maxConcurrency);
         await Assert.That(TestPdf.PageCount(output)).IsEqualTo(10);
@@ -201,7 +201,52 @@ public class ProcessorTests
     [Arguments(-1)]
     public async Task Constructor_NonPositiveConcurrency_Throws(int maxConcurrency)
     {
-        await Assert.That(() => new Processor(new FakeBrowser().Browser, Links(), maxConcurrency))
+        await Assert.That(() => new Processor(new FakeBrowser().Browser, Links(), maxConcurrency: maxConcurrency))
             .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task Process_UsesInjectedFormatForRenderingAndMerging()
+    {
+        using var temp = new TempDirectory();
+        string output = temp.File("out.txt");
+        var browser = new FakeBrowser();
+        List<(string Url, string Path)> rendered = [];
+        List<string>? merged = null;
+        IOutputFormat format = Substitute.For<IOutputFormat>();
+        format.FileExtension.Returns(".txt");
+        format.Render(Arg.Any<IPage>(), Arg.Any<Node>(), Arg.Any<string>()).Returns(ci =>
+        {
+            string path = ci.ArgAt<string>(2);
+            lock (rendered) rendered.Add((ci.ArgAt<Node>(1).Url, path));
+            return File.WriteAllTextAsync(path, ci.ArgAt<Node>(1).Url);
+        });
+        format.When(f => f.Merge(Arg.Any<IReadOnlyList<string>>(), output))
+            .Do(ci => merged = ci.ArgAt<IReadOnlyList<string>>(0).Select(File.ReadAllText).ToList());
+
+        await new Processor(browser.Browser, Links(new Node(B, 1, 1), new Node(A, 0, 0)), format).Process(output);
+
+        await Assert.That(rendered.Select(r => Path.GetFileName(r.Path))).IsEquivalentTo(["0.txt", "1.txt"]);
+        await Assert.That(merged).IsEquivalentTo([A, B], CollectionOrdering.Matching);
+        await Assert.That(browser.PdfPaths).IsEmpty();
+    }
+
+    [Test]
+    public async Task Process_FormatFailureFromBrowser_SkipsPage()
+    {
+        using var temp = new TempDirectory();
+        string output = temp.File("out.pdf");
+        IOutputFormat format = Substitute.For<IOutputFormat>();
+        format.FileExtension.Returns(".pdf");
+        format.Render(Arg.Any<IPage>(), Arg.Is<Node>(n => n.Url == B), Arg.Any<string>())
+            .Returns(Task.FromException(new EvaluationFailedException("page crashed")));
+        format.Render(Arg.Any<IPage>(), Arg.Is<Node>(n => n.Url == A), Arg.Any<string>())
+            .Returns(ci => { TestPdf.Create(ci.ArgAt<string>(2), 100); return Task.CompletedTask; });
+        format.When(f => f.Merge(Arg.Any<IReadOnlyList<string>>(), Arg.Any<string>()))
+            .Do(ci => PdfMerger.Merge(ci.ArgAt<IReadOnlyList<string>>(0), ci.ArgAt<string>(1)));
+
+        await new Processor(new FakeBrowser().Browser, Links(new Node(A, 0, 0), new Node(B, 1, 1)), format).Process(output);
+
+        await Assert.That(TestPdf.PageWidths(output)).IsEquivalentTo([100d]);
     }
 }

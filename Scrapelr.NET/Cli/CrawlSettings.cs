@@ -1,6 +1,15 @@
 namespace Scrapelr.NET.Cli;
 
 /// <summary>
+/// The kinds of document a crawl can produce.
+/// </summary>
+public enum OutputFormat
+{
+    Pdf,
+    Markdown
+}
+
+/// <summary>
 /// Command line options for a crawl, as bound by <see cref="CrawlCommand"/>.
 /// </summary>
 public sealed class CrawlSettings
@@ -11,8 +20,17 @@ public sealed class CrawlSettings
     /// <summary>A file listing URLs to start crawling from. Mutually exclusive with <see cref="Root"/>.</summary>
     public string? InputFile { get; init; }
 
-    /// <summary>Where to save the merged PDF.</summary>
+    /// <summary>Where to save the merged document.</summary>
     public string? OutputFile { get; init; }
+
+    /// <summary>
+    /// <c>pdf</c> or <c>markdown</c>, ignoring case. When null, <see cref="EffectiveFormat"/> is chosen
+    /// from <see cref="OutputFile"/>'s extension.
+    /// </summary>
+    public string? Format { get; init; }
+
+    /// <summary>Convert whole pages to Markdown rather than just their main content.</summary>
+    public bool FullPage { get; init; }
 
     /// <summary>
     /// How many links deep to follow from each starting page, which is depth 0. When null,
@@ -28,9 +46,22 @@ public sealed class CrawlSettings
 
     /// <summary>
     /// <see cref="MaxDepth"/> if set. Otherwise 1 when crawling from <see cref="Root"/>, and 0 when
-    /// reading <see cref="InputFile"/> so that, by default, the PDF holds just the listed pages.
+    /// reading <see cref="InputFile"/> so that, by default, the output holds just the listed pages.
     /// </summary>
     public int EffectiveMaxDepth => MaxDepth ?? (HasInputFile ? 0 : 1);
+
+    /// <summary>
+    /// <see cref="Format"/> if set. Otherwise Markdown when <see cref="OutputFile"/> ends in <c>.md</c> or
+    /// <c>.markdown</c>, and PDF for anything else.
+    /// </summary>
+    public OutputFormat EffectiveFormat => Format?.Trim().ToLowerInvariant() switch
+    {
+        "markdown" => OutputFormat.Markdown,
+        "pdf" => OutputFormat.Pdf,
+        _ => Path.GetExtension(OutputFile ?? "").ToLowerInvariant() is ".md" or ".markdown"
+            ? OutputFormat.Markdown
+            : OutputFormat.Pdf
+    };
 
     private bool HasRoot => !string.IsNullOrWhiteSpace(Root);
 
@@ -69,6 +100,16 @@ public sealed class CrawlSettings
             return $"--outputFile must be a file, not a directory: {OutputFile}";
         }
 
+        if (Format is not null && Format.Trim().ToLowerInvariant() is not ("pdf" or "markdown"))
+        {
+            return $"--format must be pdf or markdown: {Format}";
+        }
+
+        if (FullPage && EffectiveFormat != OutputFormat.Markdown)
+        {
+            return "--fullPage only applies to Markdown output.";
+        }
+
         if (MaxDepth < 0)
         {
             return "--maxDepth can't be negative.";
@@ -87,6 +128,15 @@ public sealed class CrawlSettings
     /// Call after <see cref="Validate"/> succeeds.
     /// </summary>
     public IReadOnlyList<string> GetStartUrls() => HasRoot ? [Root!] : UrlFile.Read(InputFile!);
+
+    /// <summary>
+    /// Creates the <see cref="IOutputFormat"/> for <see cref="EffectiveFormat"/>.
+    /// </summary>
+    public IOutputFormat CreateOutputFormat() => EffectiveFormat switch
+    {
+        OutputFormat.Markdown => new MarkdownOutputFormat(FullPage),
+        _ => new PdfOutputFormat()
+    };
 
     /// <summary>
     /// Converts these settings to the options consumed by <see cref="Collector"/>.

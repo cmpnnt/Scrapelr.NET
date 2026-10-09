@@ -5,7 +5,8 @@ using PuppeteerSharp;
 namespace Scrapelr.NET.Cli;
 
 /// <summary>
-/// Builds the command line for crawling a website and saving the collected pages as a single PDF.
+/// Builds the command line for crawling a website and saving the collected pages as a single PDF or
+/// Markdown file.
 /// </summary>
 public static class CrawlCommand
 {
@@ -31,8 +32,18 @@ public static class CrawlCommand
         };
         var outputFile = new Option<string>("--outputFile", "-o")
         {
-            Description = "Where to save the merged PDF. Existing files are overwritten.",
+            Description = "Where to save the merged document. Existing files are overwritten.",
             Required = true
+        };
+        var format = new Option<string>("--format", "-f")
+        {
+            Description = "pdf or markdown. [default: markdown if --outputFile ends in .md or .markdown, otherwise pdf]",
+            HelpName = "pdf|markdown"
+        };
+        var fullPage = new Option<bool>("--fullPage")
+        {
+            Description = "Convert whole pages to Markdown, including navigation and footers, rather than just " +
+                          "their main content."
         };
         var maxDepth = new Option<int?>("--maxDepth", "-m")
         {
@@ -50,9 +61,9 @@ public static class CrawlCommand
             DefaultValueFactory = _ => true
         };
 
-        var command = new RootCommand("Crawls a website and saves the collected pages as a single PDF.")
+        var command = new RootCommand("Crawls a website and saves the collected pages as a single PDF or Markdown file.")
         {
-            root, inputFile, outputFile, maxDepth, pathOnly, domainOnly
+            root, inputFile, outputFile, format, fullPage, maxDepth, pathOnly, domainOnly
         };
 
         CrawlSettings Bind(CommandResult result) => new()
@@ -60,6 +71,8 @@ public static class CrawlCommand
             Root = result.GetValue(root),
             InputFile = result.GetValue(inputFile),
             OutputFile = result.GetValue(outputFile),
+            Format = result.GetValue(format),
+            FullPage = result.GetValue(fullPage),
             MaxDepth = result.GetValue(maxDepth),
             PathOnly = result.GetValue(pathOnly),
             DomainOnly = result.GetValue(domainOnly)
@@ -88,7 +101,8 @@ public static class CrawlCommand
         string outputFile = Path.GetFullPath(settings.OutputFile!);
 
         await using IBrowser browser = await BrowserFactory.Create();
-        await Pipeline.Create(browser, settings.ToCrawlOptions()).Run(settings.GetStartUrls(), outputFile);
+        await Pipeline.Create(browser, settings.ToCrawlOptions(), settings.CreateOutputFormat())
+            .Run(settings.GetStartUrls(), outputFile);
 
         Console.WriteLine($"Saved {outputFile}");
         return 0;

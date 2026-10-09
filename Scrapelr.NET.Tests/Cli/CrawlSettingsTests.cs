@@ -236,4 +236,86 @@ public class CrawlSettingsTests
 
         await Assert.That(options).IsEqualTo(new CrawlOptions { MaxDepth = 4, PathOnly = false, DomainOnly = false });
     }
+
+    [Test]
+    [Arguments("out.pdf", OutputFormat.Pdf)]
+    [Arguments("out", OutputFormat.Pdf)]
+    [Arguments("out.txt", OutputFormat.Pdf)]
+    [Arguments("out.md", OutputFormat.Markdown)]
+    [Arguments("out.MD", OutputFormat.Markdown)]
+    [Arguments("notes/site.markdown", OutputFormat.Markdown)]
+    public async Task EffectiveFormat_WithoutFormat_FollowsOutputExtension(string outputFile, OutputFormat expected)
+    {
+        await Assert.That(new CrawlSettings { OutputFile = outputFile }.EffectiveFormat).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments("pdf", "site.md", OutputFormat.Pdf)]
+    [Arguments("PDF", "site.md", OutputFormat.Pdf)]
+    [Arguments("markdown", "site.pdf", OutputFormat.Markdown)]
+    [Arguments(" Markdown ", "site", OutputFormat.Markdown)]
+    public async Task EffectiveFormat_ExplicitFormat_WinsOverExtension(string format, string outputFile, OutputFormat expected)
+    {
+        await Assert.That(new CrawlSettings { Format = format, OutputFile = outputFile }.EffectiveFormat).IsEqualTo(expected);
+    }
+
+    [Test]
+    [Arguments("md")]
+    [Arguments("html")]
+    [Arguments("1")]
+    [Arguments("")]
+    public async Task Validate_UnknownFormat_Fails(string format)
+    {
+        var settings = new CrawlSettings { Root = Root, OutputFile = "out.pdf", Format = format };
+
+        await Assert.That(settings.Validate()).IsEqualTo($"--format must be pdf or markdown: {format}");
+    }
+
+    [Test]
+    [Arguments(null, "out.md")]
+    [Arguments("markdown", "out.txt")]
+    public async Task Validate_FullPageWithMarkdown_Succeeds(string? format, string outputFile)
+    {
+        var settings = new CrawlSettings { Root = Root, OutputFile = outputFile, Format = format, FullPage = true };
+
+        await Assert.That(settings.Validate()).IsNull();
+    }
+
+    [Test]
+    [Arguments(null, "out.pdf")]
+    [Arguments("pdf", "out.md")]
+    public async Task Validate_FullPageWithPdf_Fails(string? format, string outputFile)
+    {
+        var settings = new CrawlSettings { Root = Root, OutputFile = outputFile, Format = format, FullPage = true };
+
+        await Assert.That(settings.Validate()).IsEqualTo("--fullPage only applies to Markdown output.");
+    }
+
+    [Test]
+    public async Task CreateOutputFormat_DefaultsToPdf()
+    {
+        await Assert.That(new CrawlSettings { OutputFile = "out.pdf" }.CreateOutputFormat()).IsTypeOf<PdfOutputFormat>();
+    }
+
+    [Test]
+    public async Task CreateOutputFormat_Markdown()
+    {
+        await Assert.That(new CrawlSettings { OutputFile = "out.md" }.CreateOutputFormat()).IsTypeOf<MarkdownOutputFormat>();
+    }
+
+    [Test]
+    public async Task CreateOutputFormat_MarkdownFullPage_KeepsPageChrome()
+    {
+        using var temp = new TempDirectory();
+        string path = temp.File("0.md");
+        const string url = "https://example.com/docs/containers";
+        FakeBrowser browser = new FakeBrowser().WithDocument(url, MarkdownConverterTests.ArticleHtml, "Containers");
+        PuppeteerSharp.IPage page = await browser.Browser.NewPageAsync();
+        await page.GoToAsync(url);
+
+        IOutputFormat format = new CrawlSettings { OutputFile = "out.md", FullPage = true }.CreateOutputFormat();
+        await format.Render(page, new Scrapelr.NET.Link.Node(url, 0, 0), path);
+
+        await Assert.That(await File.ReadAllTextAsync(path)).Contains("Copyright Example Corp");
+    }
 }

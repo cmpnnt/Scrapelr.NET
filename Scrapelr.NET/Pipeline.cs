@@ -37,16 +37,17 @@ public sealed class Pipeline
     /// </summary>
     /// <param name="browser">The browser used to crawl and render. Its lifetime is owned by the caller.</param>
     /// <param name="options">Crawl configuration.</param>
-    public static Pipeline Create(IBrowser browser, CrawlOptions options) => new(
+    /// <param name="format">How pages are rendered and merged. Defaults to <see cref="PdfOutputFormat"/>.</param>
+    public static Pipeline Create(IBrowser browser, CrawlOptions options, IOutputFormat? format = null) => new(
         writer => new Collector(browser, writer, options),
-        reader => new Processor(browser, reader));
+        reader => new Processor(browser, reader, format));
 
     /// <summary>
     /// Crawls from each of <paramref name="uris"/> and saves every collected page, in crawl order, as a
-    /// single PDF at <paramref name="outputFile"/>. Collection and processing run concurrently.
+    /// single document at <paramref name="outputFile"/>. Collection and processing run concurrently.
     /// </summary>
     /// <param name="uris">The URLs to start crawling from.</param>
-    /// <param name="outputFile">Where to save the merged PDF.</param>
+    /// <param name="outputFile">Where to save the merged document.</param>
     public async Task Run(IEnumerable<string> uris, string outputFile)
     {
         var channel = Channel.CreateUnbounded<Node>();

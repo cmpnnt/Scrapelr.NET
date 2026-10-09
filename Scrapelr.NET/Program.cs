@@ -8,6 +8,8 @@ using Scrapelr.NET.Cli;
  *   Note: --pathOnly does strict path checking, so the child URL must be a substring of the parentURL, and the parentURL must be navigable (meaning not 404)
  * --domainOnly, -d (Default: true)
  * --outputFile -o (mandatory, error if not set)
+ * --format -f (pdf or markdown; default markdown if --outputFile ends in .md or .markdown, otherwise pdf)
+ * --fullPage (Markdown only: convert whole pages instead of just their main content)
  * --maxDepth -m (default 1, or 0 with --inputFile)
  *
  * The composition root is CrawlCommand: it builds a Pipeline from ICollector and IProcessor factories,
