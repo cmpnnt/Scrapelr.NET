@@ -28,13 +28,10 @@ public class Processor : IProcessor
     /// </summary>
     public async Task Process(string outputFile)
     {
-        // TODO: Consider using an object pool somewhere to reduce the creation of page objects!!
         string systemTempDir = Path.GetTempPath();
         string pdfTempDir = Path.Combine(systemTempDir, RandomName(true));
         Console.WriteLine($"The temp dir is {pdfTempDir}");
         Directory.CreateDirectory(pdfTempDir);
-        
-        var counter = 0;
         
         List<Task> tasks = [];
 
@@ -50,8 +47,9 @@ public class Processor : IProcessor
                         Console.WriteLine(url);
                         IPage? page = await _browser.NewPageAsync();
                         await page.GoToAsync(uri);
-                        await page.PdfAsync($"{pdfTempDir}{RandomName()}-{counter}.pdf");
-                        counter = counter++;
+                        // Node.Order is assigned once by the collector and is unique per crawl, so it
+                        // needs no synchronization here the way a shared counter would.
+                        await page.PdfAsync($"{pdfTempDir}{RandomName()}-{url.Order}.pdf");
                     }
                 });
         

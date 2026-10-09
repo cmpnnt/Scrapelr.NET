@@ -5,105 +5,132 @@ using Scrapelr.NET.Link;
 
 namespace Scrapelr.NET;
 
-// TODO: Convert collector to a regular class.
-// Move all of the options into an options class that is accepted in the constructor?
-public static class Collector
+/// <summary>
+/// Crawls a website from a starting URL, writing collected links to a ChannelWriter to be read by a
+/// processor and saved as PDF files.
+/// </summary>
+/// <remarks>
+/// One instance represents one crawl: the visited set, the pending queue and the ordering counter are
+/// all per-crawl state held as fields. Call <see cref="Collect"/> once per instance.
+/// </remarks>
+public class Collector : ICollector
 {
+    private readonly IBrowser _browser;
+    private readonly ChannelWriter<Node> _writer;
+    private readonly CrawlOptions _options;
+
+    /* Concurrency: If you plan to make this multithreaded, swap Queue<T> for ConcurrentQueue<T>
+       and HashSet<T> for ConcurrentDictionary<T, byte>. However, I don't think the link collection
+       process will be concurrent or multithreaded. */
+    private readonly HashSet<Node> _urlSet = new(new Comparer());
+    private readonly Queue<Node> _urls = new();
+    private int _orderCounter;
+    private bool _collected;
+
     /// <summary>
-    /// Given a starting URL, crawls a website according to the specified parameters, writing collected links to a ChannelWriter
-    /// to be read by a processor and saved as PDF files. 
+    /// Creates a collector for a single crawl.
     /// </summary>
-    /// <param name="browser"></param>
-    /// <param name="uri"></param>
-    /// <param name="writer"></param>
-    /// <param name="maxDepth"></param>
-    /// <param name="domainOnly"></param>
-    /// <param name="pathOnly"></param>
-    public static async Task Collect(IBrowser browser, string uri, ChannelWriter<Node> writer, int maxDepth = 1, bool domainOnly = true, bool pathOnly = true)
+    /// <param name="browser">The browser used to load pages. Its lifetime is owned by the caller.</param>
+    /// <param name="writer">The channel the collected links are published to.</param>
+    /// <param name="options">Crawl configuration. Defaults are used when omitted.</param>
+    public Collector(IBrowser browser, ChannelWriter<Node> writer, CrawlOptions? options = null)
     {
-        
-        /* Concurrency: If you plan to make this multithreaded, swap Queue<T> for ConcurrentQueue<T>
-           and HashSet<T> for ConcurrentDictionary<T, byte>. However, I don't think the link collection
-           process will be concurrent or multithreaded. */
-        var urlSet = new HashSet<Node>(new Comparer());
-        Queue<Node> urls = new();
-        var orderCounter = 0;
-        
-        Node leftPart = LeftPart(uri, 0, orderCounter++);
-        urls.Enqueue(leftPart);
-        urlSet.Add(leftPart);
-        
-        await writer.WriteAsync(leftPart);
-        
-        while (urls.Count > 0)
+        _browser = browser;
+        _writer = writer;
+        _options = options ?? new CrawlOptions();
+    }
+
+    /// <summary>
+    /// Given a starting URL, crawls a website according to the configured <see cref="CrawlOptions"/>,
+    /// writing collected links to the ChannelWriter and completing it when the crawl finishes.
+    /// </summary>
+    /// <param name="uri">The URL to start crawling from.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the instance has already been used.</exception>
+    public async Task Collect(string uri)
+    {
+        if (_collected)
         {
-            Node node = urls.Dequeue();
-            if (node.Depth > maxDepth)
+            throw new InvalidOperationException($"{nameof(Collect)} may only be called once per {nameof(Collector)}.");
+        }
+        _collected = true;
+
+        Node leftPart = LeftPart(uri, 0, _orderCounter++);
+        _urls.Enqueue(leftPart);
+        _urlSet.Add(leftPart);
+
+        await _writer.WriteAsync(leftPart);
+
+        while (_urls.Count > 0)
+        {
+            Node node = _urls.Dequeue();
+            if (node.Depth > _options.MaxDepth)
             {
                 continue;
             }
-            
-            (HashSet<Node> scrapedUris, int newOrder) = await GetLinks(browser, node, writer, urlSet, orderCounter, domainOnly, pathOnly);
-            orderCounter = newOrder;
-            
-            urls.EnqueueRange(scrapedUris, urlSet);
+
+            HashSet<Node> scrapedUris = await GetLinks(node);
+
+            _urls.EnqueueRange(scrapedUris, _urlSet);
         }
-        writer.Complete();
+        _writer.Complete();
     }
 
     #region private
     /// <summary>
-    /// 
+    /// Loads a single page, extracts its anchors and publishes the ones not already seen.
     /// </summary>
-    /// <param name="browser"></param>
-    /// <param name="uri"></param>
-    /// <param name="writer"></param>
-    /// <param name="urlSet"></param>
-    /// <param name="orderCounter"></param>
-    /// <param name="domainOnly"></param>
-    /// <param name="pathOnly"></param>
-    /// <returns></returns>
-    private static async Task<(HashSet<Node>, int)> GetLinks(IBrowser browser, Node uri, ChannelWriter<Node> writer,
-        HashSet<Node> urlSet, int orderCounter, bool domainOnly = true, bool pathOnly = true)
+    /// <param name="node">The page to scrape.</param>
+    /// <returns>The newly discovered links, to be queued for crawling.</returns>
+    private async Task<HashSet<Node>> GetLinks(Node node)
     {
-        await using IPage? page = await browser.NewPageAsync();
-        
-        var root = new Uri(LeftPart(uri.Url, uri.Depth, uri.Order).Url);
-        
+        await using IPage? page = await _browser.NewPageAsync();
+
+        var root = new Uri(LeftPart(node.Url, node.Depth, node.Order).Url);
+
         await page.GoToAsync(root.AbsoluteUri);
-        
+
         const string jsSelectAllAnchors = @"Array.from(document.querySelectorAll('a')).map(a => a.href);";
         string[]? urls = await page.EvaluateExpressionAsync<string[]>(jsSelectAllAnchors);
 
-        if (urls == null) return (new HashSet<Node>(new Comparer()), orderCounter);
-        
-        bool followDomain = pathOnly || domainOnly; // Because pathOnly implies domainOnly
-        bool followPaths = pathOnly;
+        if (urls == null) return new HashSet<Node>(new Comparer());
 
-        int depth = urlSet.FirstOrDefault().Depth + 1;
-        (HashSet<Node> distinctUrls, int newOrder) = DistinctUris(urls, depth, orderCounter, root, followDomain, followPaths);
+        HashSet<Node> distinctUrls = DistinctUris(urls, node.Depth + 1, root);
 
         // Add unique elements of both to distinctNodes
-        distinctUrls.SymmetricExceptWith(urlSet);
+        distinctUrls.SymmetricExceptWith(_urlSet);
 
-        await writer.WriteAllAsync(distinctUrls);
+        await _writer.WriteAllAsync(distinctUrls);
 
-        return (distinctUrls, newOrder);
+        return distinctUrls;
     }
 
     /// <summary>
-    /// Downloads a headless Chromium browser engine for using PuppeteerSharp.
+    /// Creates a set of distinct URLs from the given array by normalizing the URLs without fragments and query strings.
+    /// Results are limited to URLs matching <paramref name="root"/> according to the configured
+    /// <see cref="CrawlOptions"/>.
     /// </summary>
-    /// <returns>A PuppeteerSharp IBrowser instance.</returns>
-    public static async Task<IBrowser> Setup()
+    /// <param name="urls">A string array of URLs to normalize.</param>
+    /// <param name="depth">An integer counting how many links in this chain have been followed from the starting page.</param>
+    /// <param name="root">Results are limited to URLs that match this base.</param>
+    /// <returns>A HashSet of deduplicated and normalized URLs.</returns>
+    private HashSet<Node> DistinctUris(string[] urls, int depth, Uri root)
     {
-        var browserFetcher = new BrowserFetcher();
-        await browserFetcher.DownloadAsync();
-        IBrowser? browser = await Puppeteer.LaunchAsync(
-            new LaunchOptions { Headless = true }
-        );
-        
-        return browser;
+        var distinctNodes = new HashSet<Node>(new Comparer());
+
+        // Remove duplicate URLs by normalizing URLs without fragments and query strings
+        foreach (string s in urls)
+        {
+            if (!Uri.TryCreate(s, UriKind.Absolute, out Uri? url)) continue;
+
+            string normalized = url.GetLeftPart(UriPartial.Path);
+
+            if (_options.FollowDomain && !IsInDomain(root, new Uri(normalized))) continue;
+            if (_options.PathOnly && !IsSubPath(root, new Uri(normalized))) continue;
+
+            Node node = new(normalized, depth, _orderCounter++);
+            distinctNodes.Add(node);
+        }
+        return distinctNodes;
     }
 
     private static bool IsInDomain(Uri parentUri, Uri childUri)
@@ -117,7 +144,7 @@ public static class Collector
                parentUri.Host == childUri.Host &&
                parentUri.Port == childUri.Port;
     }
-    
+
     /// <summary>
     /// Determines whether a <paramref name="childUri"/> is a sub path of a <paramref name="parentUri"/>.
     /// </summary>
@@ -130,12 +157,12 @@ public static class Collector
         {
             return false;
         }
-        
+
         string parentPath = parentUri.AbsolutePath;
         string normalizedParent = parentPath.EndsWith('/') ? parentPath : parentPath + "/";
         string childPath = childUri.AbsolutePath;
         string normalizedChild = childPath.EndsWith('/') ? childPath : childPath + "/";
-        
+
         return normalizedChild.StartsWith(normalizedParent, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -145,47 +172,15 @@ public static class Collector
     /// </summary>
     /// <param name="url">The URL whose left part to return.</param>
     /// <param name="depth">The number of the current link in the crawl chain.</param>
-    /// <param name="order"></param>
+    /// <param name="order">The position of this link in the parsed page ordering.</param>
     /// <returns>The parsed left part of the given URL.</returns>
     private static Node LeftPart(string url, int depth, int order)
     {
         Uri uri = new(url);
-        return new Node(uri.GetLeftPart(UriPartial.Path), depth, order); 
+        return new Node(uri.GetLeftPart(UriPartial.Path), depth, order);
     }
 
-    /// <summary>
-    /// Creates a set of distinct URLs from the given array by normalizing the URLs without fragments and query strings.
-    /// If <paramref name="root"/> is populated, only URLs with that base path are included.
-    /// </summary>
-    /// <param name="urls">A string array of URLs to normalize.</param>
-    /// <param name="depth">An integer counting how many links in this chain have been followed from the starting page.</param>
-    /// <param name="orderCounter"></param>
-    /// <param name="root">If populated, results are limited to URLs that match this base.</param>
-    /// <param name="domainOnly"></param>
-    /// <param name="pathOnly"></param>
-    /// <returns>A HashSet of deduplicated and normalized URLs, limited to those that match the <paramref name="root"/>, if populated.</returns>
-    private static (HashSet<Node>, int) DistinctUris(string[] urls, int depth, int orderCounter, Uri? root = null, bool domainOnly = true, bool pathOnly = true)
-    {
-        var distinctNodes = new HashSet<Node>(new Comparer());
-
-        // Remove duplicate URLs by normalizing URLs without fragments and query strings
-        foreach (string s in urls)
-        {
-            if (!Uri.TryCreate(s, UriKind.Absolute, out Uri? url)) continue;
-            
-            string normalized = url.GetLeftPart(UriPartial.Path);
-
-            // When root is populated, only add subpaths of the root
-            if (root is null) continue;
-            if (domainOnly && !IsInDomain(root, new Uri(normalized))) continue;
-            if (pathOnly && !IsSubPath(root, new Uri(normalized))) continue;
-            
-            Node node = new(normalized, depth, orderCounter++);
-            distinctNodes.Add(node);
-        }
-        return (distinctNodes, orderCounter);
-    }
-    
+    // Unused pending the --inputFile flag.
     private static bool IsFilePath(string input)
     {
         if (Uri.TryCreate(input, UriKind.Absolute, out Uri? uriResult))
@@ -207,6 +202,6 @@ public static class Collector
 
         return false;
     }
-    
+
     #endregion
 }

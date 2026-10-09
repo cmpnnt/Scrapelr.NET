@@ -5,7 +5,7 @@ using PuppeteerSharp;
 using Scrapelr.NET;
 using Scrapelr.NET.Link;
 
-await using IBrowser browser = await Collector.Setup();
+await using IBrowser browser = await BrowserFactory.Create();
 
 const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
 const string outputFile = "/Users/chad/Downloads/output.pdf";
@@ -22,15 +22,20 @@ var channel = Channel.CreateUnbounded<Node>();
  */
 // The two spinners shown by SpectreConsole will be "Crawling..." and "Creating PDF..."
 
-/* GEMINI: Ignore this comment: TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
+/* TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
  This will be false by default, and will be PathOnly by default. You can specify otherwise. So, if
  you provide a text file with a list of URLs and no other flags, it'll just give you a PDF with
  those pages. */
 
-/* TODO: Consider setting this up with dependency injection, and having the Processor implement an interface so it can
-   be swapped out */
+/* TODO: Consider setting this up with dependency injection. Collector and Processor both implement an
+   interface now, so either can be swapped out. */
 
-_ = Collector.Collect(browser, uri, channel.Writer, domainOnly: true, pathOnly: false);
+var collector = new Collector(browser, channel.Writer, new CrawlOptions
+{
+    DomainOnly = true,
+    PathOnly = true
+});
+_ = collector.Collect(uri);
 
 ChannelReader<Node> reader = channel.Reader;
 var processor = new Processor(browser, reader);
