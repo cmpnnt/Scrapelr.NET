@@ -6,6 +6,9 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
+        <!-- Keeps solution-wide `dotnet publish` from publishing the tests, which fails because the app
+             is self-contained (native AOT) when published. -->
+        <IsPublishable>false</IsPublishable>
     </PropertyGroup>
 
     <ItemGroup>
