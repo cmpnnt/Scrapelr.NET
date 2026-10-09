@@ -2,7 +2,6 @@ using System.Diagnostics;
 using PuppeteerSharp;
 using Scrapelr.NET.Cli;
 using Scrapelr.NET.Tests.Helpers;
-using Spectre.Console.Cli;
 
 namespace Scrapelr.NET.Tests.Integration;
 
@@ -42,7 +41,7 @@ public class EndToEndTests
         using var temp = new TempDirectory();
         string output = temp.File("nested", "site.pdf");
 
-        int exitCode = await new CommandApp<CrawlCommand>().RunAsync(["-r", site.Url("/docs/"), "-o", output]);
+        int exitCode = await CrawlCommand.Create().Parse(["-r", site.Url("/docs/"), "-o", output]).InvokeAsync();
 
         await Assert.That(exitCode).IsEqualTo(0);
         // The root page and its two in-path links
@@ -59,8 +58,9 @@ public class EndToEndTests
         using var temp = new TempDirectory();
         string output = temp.File("site.pdf");
 
-        int exitCode = await new CommandApp<CrawlCommand>()
-            .RunAsync(["-r", site.Url("/docs/"), "-o", output, ..options.Split(' ')]);
+        int exitCode = await CrawlCommand.Create()
+            .Parse(["-r", site.Url("/docs/"), "-o", output, ..options.Split(' ')])
+            .InvokeAsync();
 
         await Assert.That(exitCode).IsEqualTo(0);
         await Assert.That(TestPdf.PageCount(output)).IsEqualTo(expectedPages);
@@ -104,7 +104,7 @@ public class EndToEndTests
         (int exitCode, string stdout) = await RunApp(temp.FullName, "-r", "http://127.0.0.1:1/");
 
         await Assert.That(exitCode).IsNotEqualTo(0);
-        await Assert.That(stdout).Contains("--outputFile is required.");
+        await Assert.That(stdout).Contains("Option '--outputFile' is required.");
         await Assert.That(Directory.EnumerateFileSystemEntries(temp.FullName)).IsEmpty();
     }
 
@@ -130,8 +130,7 @@ public class EndToEndTests
         {
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            Environment = { ["COLUMNS"] = "500", ["NO_COLOR"] = "1" }
+            RedirectStandardError = true
         };
 
         using Process process = Process.Start(startInfo)!;

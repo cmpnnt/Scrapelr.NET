@@ -1,5 +1,4 @@
 using Scrapelr.NET.Cli;
-using Spectre.Console.Cli;
 
 /*
  * --root, -r
@@ -10,7 +9,6 @@ using Spectre.Console.Cli;
  * --outputFile -o (mandatory, error if not set)
  * --maxDepth -m (default 1)
  */
-// The two spinners shown by SpectreConsole will be "Crawling..." and "Creating PDF..."
 
 /* TODO: We need a flag to specify that the crawler should follow all URLs in an input text file.
  This will be false by default, and will be PathOnly by default. You can specify otherwise. So, if
@@ -20,6 +18,4 @@ using Spectre.Console.Cli;
 /* TODO: Consider setting this up with dependency injection. Collector and Processor both implement an
    interface now, so either can be swapped out. */
 
-var app = new CommandApp<CrawlCommand>();
-app.Configure(config => config.SetApplicationName("scrapelr"));
-return await app.RunAsync(args);
+return await CrawlCommand.Create().Parse(args).InvokeAsync();

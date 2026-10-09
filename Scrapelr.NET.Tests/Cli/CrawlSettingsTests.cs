@@ -12,7 +12,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = "out.pdf" };
 
-        await Assert.That(settings.Validate().Successful).IsTrue();
+        await Assert.That(settings.Validate()).IsNull();
     }
 
     [Test]
@@ -33,7 +33,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = root, OutputFile = "out.pdf" };
 
-        await Assert.That(settings.Validate().Message).IsEqualTo("--root is required.");
+        await Assert.That(settings.Validate()).IsEqualTo("--root is required.");
     }
 
     [Test]
@@ -45,7 +45,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = root, OutputFile = "out.pdf" };
 
-        await Assert.That(settings.Validate().Message).StartsWith("--root must be an absolute http or https URL");
+        await Assert.That(settings.Validate()).StartsWith("--root must be an absolute http or https URL");
     }
 
     [Test]
@@ -55,7 +55,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = root, OutputFile = "out.pdf" };
 
-        await Assert.That(settings.Validate().Successful).IsTrue();
+        await Assert.That(settings.Validate()).IsNull();
     }
 
     [Test]
@@ -66,7 +66,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = outputFile };
 
-        await Assert.That(settings.Validate().Message).IsEqualTo("--outputFile is required.");
+        await Assert.That(settings.Validate()).IsEqualTo("--outputFile is required.");
     }
 
     [Test]
@@ -75,7 +75,7 @@ public class CrawlSettingsTests
         using var temp = new TempDirectory();
         var settings = new CrawlSettings { Root = Root, OutputFile = temp.FullName };
 
-        await Assert.That(settings.Validate().Message).StartsWith("--outputFile must be a file");
+        await Assert.That(settings.Validate()).StartsWith("--outputFile must be a file");
     }
 
     [Test]
@@ -83,7 +83,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = "missing-dir" + Path.DirectorySeparatorChar };
 
-        await Assert.That(settings.Validate().Message).StartsWith("--outputFile must be a file");
+        await Assert.That(settings.Validate()).StartsWith("--outputFile must be a file");
     }
 
     [Test]
@@ -92,7 +92,7 @@ public class CrawlSettingsTests
         using var temp = new TempDirectory();
         var settings = new CrawlSettings { Root = Root, OutputFile = temp.File("new", "out.pdf") };
 
-        await Assert.That(settings.Validate().Successful).IsTrue();
+        await Assert.That(settings.Validate()).IsNull();
     }
 
     [Test]
@@ -100,7 +100,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = "out.pdf", MaxDepth = -1 };
 
-        await Assert.That(settings.Validate().Message).IsEqualTo("--maxDepth can't be negative.");
+        await Assert.That(settings.Validate()).IsEqualTo("--maxDepth can't be negative.");
     }
 
     [Test]
@@ -108,7 +108,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = "out.pdf", PathOnly = true, DomainOnly = false };
 
-        await Assert.That(settings.Validate().Message).IsEqualTo("--domainOnly can't be false while --pathOnly is true.");
+        await Assert.That(settings.Validate()).IsEqualTo("--domainOnly can't be false while --pathOnly is true.");
     }
 
     [Test]
@@ -118,7 +118,7 @@ public class CrawlSettingsTests
     {
         var settings = new CrawlSettings { Root = Root, OutputFile = "out.pdf", PathOnly = pathOnly, DomainOnly = domainOnly };
 
-        await Assert.That(settings.Validate().Successful).IsTrue();
+        await Assert.That(settings.Validate()).IsNull();
     }
 
     [Test]
