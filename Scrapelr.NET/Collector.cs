@@ -27,6 +27,9 @@ public class Collector : ICollector
     private int _orderCounter;
     private bool _collected;
 
+    // The starting URL. Followed links are filtered against it, not against the page they were found on.
+    private Uri _root = null!;
+
     /// <summary>
     /// Creates a collector for a single crawl.
     /// </summary>
@@ -75,6 +78,7 @@ public class Collector : ICollector
     private async Task Crawl(string uri)
     {
         Node leftPart = LeftPart(uri, 0, _orderCounter++);
+        _root = new Uri(leftPart.Url);
         _urls.Enqueue(leftPart);
         _urlSet.Add(leftPart);
 
@@ -83,7 +87,10 @@ public class Collector : ICollector
         while (_urls.Count > 0)
         {
             Node node = _urls.Dequeue();
-            if (node.Depth > _options.MaxDepth)
+
+            // Links found on a page are one level deeper than it, so a page at MaxDepth is collected
+            // but not scraped for links.
+            if (node.Depth >= _options.MaxDepth)
             {
                 continue;
             }
@@ -103,19 +110,17 @@ public class Collector : ICollector
     {
         await using IPage? page = await _browser.NewPageAsync();
 
-        var root = new Uri(LeftPart(node.Url, node.Depth, node.Order).Url);
-
-        await page.GoToAsync(root.AbsoluteUri);
+        await page.GoToAsync(node.Url);
 
         const string jsSelectAllAnchors = @"Array.from(document.querySelectorAll('a')).map(a => a.href);";
         string[]? urls = await page.EvaluateExpressionAsync<string[]>(jsSelectAllAnchors);
 
         if (urls == null) return new HashSet<Node>(new Comparer());
 
-        HashSet<Node> distinctUrls = DistinctUris(urls, node.Depth + 1, root);
+        HashSet<Node> distinctUrls = DistinctUris(urls, node.Depth + 1, _root);
 
-        // Add unique elements of both to distinctNodes
-        distinctUrls.SymmetricExceptWith(_urlSet);
+        // Drop links that have already been collected
+        distinctUrls.ExceptWith(_urlSet);
 
         await _writer.WriteAllAsync(distinctUrls);
 
