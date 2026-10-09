@@ -1,22 +1,12 @@
-﻿// See https://aka.ms/new-console-template for more information
-
-using System.Threading.Channels;
-using PuppeteerSharp;
-using Scrapelr.NET;
-using Scrapelr.NET.Link;
-
-await using IBrowser browser = await BrowserFactory.Create();
-
-const string uri = "https://learn.microsoft.com/en-us/dotnet/core/containers/overview?tabs=windows";
-const string outputFile = "/Users/chad/Downloads/output.pdf";
-var channel = Channel.CreateUnbounded<Node>();
+using Scrapelr.NET.Cli;
+using Spectre.Console.Cli;
 
 /*
  * --root, -r
  * --pathOnly, -p (Default: true. `true` implies `domainOnly = true`, it's an error to set `domainOnly = false` if `pathOnly = true`)
  *   Note: --pathOnly does strict path checking, so the child URL must be a substring of the parentURL, and the parentURL must be navigable (meaning not 404)
  * --domainOnly, -d (Default: true)
- * --inputFile, -i
+ * --inputFile, -i (TODO)
  * --outputFile -o (mandatory, error if not set)
  * --maxDepth -m (default 1)
  */
@@ -30,13 +20,6 @@ var channel = Channel.CreateUnbounded<Node>();
 /* TODO: Consider setting this up with dependency injection. Collector and Processor both implement an
    interface now, so either can be swapped out. */
 
-var collector = new Collector(browser, channel.Writer, new CrawlOptions
-{
-    DomainOnly = true,
-    PathOnly = true
-});
-_ = collector.Collect(uri);
-
-ChannelReader<Node> reader = channel.Reader;
-var processor = new Processor(browser, reader);
-await processor.Process(outputFile);
+var app = new CommandApp<CrawlCommand>();
+app.Configure(config => config.SetApplicationName("scrapelr"));
+return await app.RunAsync(args);

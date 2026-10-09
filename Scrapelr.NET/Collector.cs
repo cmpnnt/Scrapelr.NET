@@ -42,7 +42,8 @@ public class Collector : ICollector
 
     /// <summary>
     /// Given a starting URL, crawls a website according to the configured <see cref="CrawlOptions"/>,
-    /// writing collected links to the ChannelWriter and completing it when the crawl finishes.
+    /// writing collected links to the ChannelWriter and completing it when the crawl finishes. If the
+    /// crawl fails, the writer is completed with the exception so readers don't wait forever.
     /// </summary>
     /// <param name="uri">The URL to start crawling from.</param>
     /// <exception cref="InvalidOperationException">Thrown when the instance has already been used.</exception>
@@ -54,6 +55,25 @@ public class Collector : ICollector
         }
         _collected = true;
 
+        try
+        {
+            await Crawl(uri);
+            _writer.Complete();
+        }
+        catch (Exception ex)
+        {
+            _writer.TryComplete(ex);
+            throw;
+        }
+    }
+
+    #region private
+    /// <summary>
+    /// Crawls breadth-first from <paramref name="uri"/>, publishing each newly discovered link.
+    /// </summary>
+    /// <param name="uri">The URL to start crawling from.</param>
+    private async Task Crawl(string uri)
+    {
         Node leftPart = LeftPart(uri, 0, _orderCounter++);
         _urls.Enqueue(leftPart);
         _urlSet.Add(leftPart);
@@ -72,10 +92,8 @@ public class Collector : ICollector
 
             _urls.EnqueueRange(scrapedUris, _urlSet);
         }
-        _writer.Complete();
     }
 
-    #region private
     /// <summary>
     /// Loads a single page, extracts its anchors and publishes the ones not already seen.
     /// </summary>
