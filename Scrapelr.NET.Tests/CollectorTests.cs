@@ -220,4 +220,106 @@ public class CollectorTests
 
         await Assert.That(channel.Reader.Completion.IsFaulted).IsTrue();
     }
+
+    private static async Task<List<Node>> CrawlMany(FakeBrowser browser, IEnumerable<string> starts, CrawlOptions? options = null)
+    {
+        var channel = Channel.CreateUnbounded<Node>();
+        await new Collector(browser.Browser, channel.Writer, options).Collect(starts);
+        return await channel.Reader.ReadAllAsync().ToListAsync();
+    }
+
+    [Test]
+    public async Task CollectMany_MaxDepthZero_PublishesStartUrlsInGivenOrder()
+    {
+        FakeBrowser browser = Site();
+
+        List<Node> nodes = await CrawlMany(browser, [B, Root, A], new CrawlOptions { MaxDepth = 0 });
+
+        await Assert.That(Urls(nodes)).IsEquivalentTo([B, Root, A], CollectionOrdering.Matching);
+        await Assert.That(nodes.Select(n => n.Depth)).IsEquivalentTo([0, 0, 0]);
+        await Assert.That(browser.Visited.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CollectMany_DeduplicatesNormalizedStartUrls()
+    {
+        List<Node> nodes = await CrawlMany(Site(), [A, A + "#top", "https://EXAMPLE.com/docs/a?x=1", B],
+            new CrawlOptions { MaxDepth = 0 });
+
+        await Assert.That(Urls(nodes)).IsEquivalentTo([A, B], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task CollectMany_GroupsEachStartUrlWithItsLinks()
+    {
+        List<Node> nodes = await CrawlMany(Site(), ["https://example.com/blog/", Root], new CrawlOptions { MaxDepth = 1 });
+
+        // The blog page links to nothing in the fake site, so it stands alone before the docs crawl.
+        await Assert.That(Urls(nodes))
+            .IsEquivalentTo(["https://example.com/blog/", Root, A, B], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task CollectMany_FiltersLinksAgainstTheStartUrlTheyWereReachedFrom()
+    {
+        const string Blog = "https://example.com/blog/";
+        FakeBrowser browser = Site().WithPage(Blog, OffPath, A);
+
+        List<Node> nodes = await CrawlMany(browser, [Root, Blog], new CrawlOptions { MaxDepth = 1 });
+
+        // OffPath is outside the docs path, so the docs crawl skips it but the blog crawl collects it.
+        // A is outside the blog path, and was already collected by the docs crawl anyway.
+        await Assert.That(Urls(nodes)).IsEquivalentTo([Root, A, B, Blog, OffPath], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task CollectMany_LaterStartUrlFoundEarlier_KeepsItsOwnPlaceAndDepth()
+    {
+        // A is linked from Root but listed second, so it's published second at depth 0 and crawled from there.
+        List<Node> nodes = await CrawlMany(Site(), [Root, A], new CrawlOptions { MaxDepth = 1 });
+
+        // Sibling isn't beneath A, which is now the start URL its links are filtered against.
+        await Assert.That(Urls(nodes)).IsEquivalentTo([Root, B, A, AChild], CollectionOrdering.Matching);
+        await Assert.That(nodes.Single(n => n.Url == A).Depth).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CollectMany_AssignsUniqueIncreasingOrderAcrossStartUrls()
+    {
+        List<Node> nodes = await CrawlMany(Site(), [B, Root], new CrawlOptions { MaxDepth = 2 });
+
+        int[] orders = nodes.Select(n => n.Order).ToArray();
+        await Assert.That(orders).IsEquivalentTo(orders.Order(), CollectionOrdering.Matching);
+        await Assert.That(orders.Distinct().Count()).IsEqualTo(orders.Length);
+    }
+
+    [Test]
+    public async Task CollectMany_NoUrls_Throws()
+    {
+        var channel = Channel.CreateUnbounded<Node>();
+
+        await Assert.That(async () => await new Collector(Site().Browser, channel.Writer).Collect(Array.Empty<string>()))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task CollectMany_InvalidUrl_FailsBeforePublishingAnything()
+    {
+        var channel = Channel.CreateUnbounded<Node>();
+
+        await Assert.That(async () => await new Collector(Site().Browser, channel.Writer).Collect([Root, "not a url"]))
+            .Throws<UriFormatException>();
+
+        await Assert.That(channel.Reader.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CollectMany_AfterCollect_Throws()
+    {
+        var channel = Channel.CreateUnbounded<Node>();
+        var collector = new Collector(Site().Browser, channel.Writer);
+        await collector.Collect(Root);
+
+        await Assert.That(async () => await collector.Collect([Root])).Throws<InvalidOperationException>();
+    }
 }

@@ -67,6 +67,50 @@ public class EndToEndTests
     }
 
     [Test]
+    public async Task CrawlCommand_InputFile_WritesOnlyListedPagesByDefault()
+    {
+        using var site = new TestSite(Pages);
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        string output = temp.File("pages.pdf");
+        await File.WriteAllLinesAsync(urls, ["# Two pages", site.Url("/other/"), "", site.Url("/docs/b")]);
+
+        int exitCode = await CrawlCommand.Create().Parse(["-i", urls, "-o", output]).InvokeAsync();
+
+        await Assert.That(exitCode).IsEqualTo(0);
+        await Assert.That(TestPdf.PageCount(output)).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task CrawlCommand_InputFileWithMaxDepth_FollowsLinksFromEachUrl()
+    {
+        using var site = new TestSite(Pages);
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        string output = temp.File("pages.pdf");
+        await File.WriteAllLinesAsync(urls, [site.Url("/docs/"), site.Url("/other/")]);
+
+        int exitCode = await CrawlCommand.Create().Parse(["-i", urls, "-o", output, "-m", "1"]).InvokeAsync();
+
+        await Assert.That(exitCode).IsEqualTo(0);
+        // /docs/ and its two in-path links, then /other/
+        await Assert.That(TestPdf.PageCount(output)).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task Executable_RelativeInputFile_IsReadFromWorkingDirectory()
+    {
+        using var site = new TestSite(Pages);
+        using var temp = new TempDirectory();
+        await File.WriteAllLinesAsync(temp.File("urls.txt"), [site.Url("/docs/a/deep")]);
+
+        (int exitCode, _) = await RunApp(temp.FullName, "-i", "urls.txt", "-o", "deep.pdf");
+
+        await Assert.That(exitCode).IsEqualTo(0);
+        await Assert.That(TestPdf.PageCount(temp.File("deep.pdf"))).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Executable_RelativeOutputFile_IsWrittenUnderWorkingDirectory()
     {
         using var site = new TestSite(Pages);

@@ -66,6 +66,48 @@ public class CrawlCommandTests
     }
 
     [Test]
+    [Arguments("-i")]
+    [Arguments("--inputFile")]
+    public async Task InputFile_Binds(string option)
+    {
+        using var temp = new Helpers.TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, [Root, "https://example.com/blog/"]);
+
+        Result result = await Invoke(option, urls, "-o", "out.pdf");
+
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+        await Assert.That(result.Settings!.InputFile).IsEqualTo(urls);
+        await Assert.That(result.Settings.Root).IsNull();
+        await Assert.That(result.Settings.GetStartUrls()).IsEquivalentTo([Root, "https://example.com/blog/"]);
+    }
+
+    [Test]
+    public async Task InputFile_WithoutMaxDepth_CollectsOnlyListedPages()
+    {
+        using var temp = new Helpers.TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, [Root]);
+
+        Result result = await Invoke("-i", urls, "-o", "out.pdf");
+
+        await Assert.That(result.Settings!.MaxDepth).IsNull();
+        await Assert.That(result.Settings.ToCrawlOptions().MaxDepth).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task InputFile_WithMaxDepth_FollowsLinks()
+    {
+        using var temp = new Helpers.TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, [Root]);
+
+        Result result = await Invoke("-i", urls, "-o", "out.pdf", "-m", "2");
+
+        await Assert.That(result.Settings!.ToCrawlOptions().MaxDepth).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task OmittedOptions_UseDefaults()
     {
         Result result = await Invoke("-r", Root, "-o", "out.pdf");
@@ -117,7 +159,7 @@ public class CrawlCommandTests
 
         await Assert.That(result.ExitCode).IsEqualTo(0);
         await Assert.That(result.Settings).IsNull();
-        foreach (string option in new[] { "--root", "--outputFile", "--maxDepth", "--pathOnly", "--domainOnly" })
+        foreach (string option in new[] { "--root", "--inputFile", "--outputFile", "--maxDepth", "--pathOnly", "--domainOnly" })
         {
             await Assert.That(result.Output).Contains(option);
         }
@@ -125,7 +167,9 @@ public class CrawlCommandTests
 
     [Test]
     [Arguments($"-r {Root}", "Option '--outputFile' is required.")]
-    [Arguments("-o out.pdf", "Option '--root' is required.")]
+    [Arguments("-o out.pdf", "Specify --root or --inputFile.")]
+    [Arguments($"-r {Root} -i urls.txt -o out.pdf", "Specify --root or --inputFile, not both.")]
+    [Arguments("-i missing-urls.txt -o out.pdf", "--inputFile not found: missing-urls.txt")]
     [Arguments($"-r {Root} -o", "Required argument missing for option: '-o'.")]
     [Arguments($"-r {Root} -o out.pdf -m lots", "Cannot parse argument 'lots' for option '--maxDepth'")]
     [Arguments($"-r {Root} -o out.pdf -p nope", "Unrecognized command or argument 'nope'.")]

@@ -6,12 +6,12 @@ using Scrapelr.NET.Link;
 namespace Scrapelr.NET;
 
 /// <summary>
-/// Crawls a website from a starting URL, writing collected links to a ChannelWriter to be read by a
-/// processor and saved as PDF files.
+/// Crawls a website from one or more starting URLs, writing collected links to a ChannelWriter to be
+/// read by a processor and saved as PDF files.
 /// </summary>
 /// <remarks>
 /// One instance represents one crawl: the visited set, the pending queue and the ordering counter are
-/// all per-crawl state held as fields. Call <see cref="Collect"/> once per instance.
+/// all per-crawl state held as fields. Call one of the <c>Collect</c> overloads once per instance.
 /// </remarks>
 public class Collector : ICollector
 {
@@ -27,7 +27,8 @@ public class Collector : ICollector
     private int _orderCounter;
     private bool _collected;
 
-    // The starting URL. Followed links are filtered against it, not against the page they were found on.
+    // The starting URL currently being crawled. Followed links are filtered against it, not against the
+    // page they were found on.
     private Uri _root = null!;
 
     /// <summary>
@@ -50,8 +51,25 @@ public class Collector : ICollector
     /// </summary>
     /// <param name="uri">The URL to start crawling from.</param>
     /// <exception cref="InvalidOperationException">Thrown when the instance has already been used.</exception>
-    public async Task Collect(string uri)
+    public Task Collect(string uri) => Collect([uri]);
+
+    /// <summary>
+    /// Crawls from each starting URL in turn, as <see cref="Collect(string)"/> does for one. Each
+    /// starting URL is published in the order given, followed by the links collected from it, and links
+    /// are filtered against the starting URL they were reached from.
+    /// </summary>
+    /// <param name="uris">The URLs to start crawling from.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="uris"/> is empty.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when the instance has already been used.</exception>
+    public async Task Collect(IEnumerable<string> uris)
     {
+        ArgumentNullException.ThrowIfNull(uris);
+        List<string> starts = uris.ToList();
+        if (starts.Count == 0)
+        {
+            throw new ArgumentException("At least one URL is required.", nameof(uris));
+        }
+
         if (_collected)
         {
             throw new InvalidOperationException($"{nameof(Collect)} may only be called once per {nameof(Collector)}.");
@@ -60,7 +78,7 @@ public class Collector : ICollector
 
         try
         {
-            await Crawl(uri);
+            await Crawl(starts);
             _writer.Complete();
         }
         catch (Exception ex)
@@ -72,17 +90,40 @@ public class Collector : ICollector
 
     #region private
     /// <summary>
-    /// Crawls breadth-first from <paramref name="uri"/>, publishing each newly discovered link.
+    /// Crawls from each of <paramref name="uris"/> in turn, skipping duplicates.
     /// </summary>
-    /// <param name="uri">The URL to start crawling from.</param>
-    private async Task Crawl(string uri)
+    /// <param name="uris">The URLs to start crawling from.</param>
+    private async Task Crawl(List<string> uris)
     {
-        Node leftPart = LeftPart(uri, 0, _orderCounter++);
-        _root = new Uri(leftPart.Url);
-        _urls.Enqueue(leftPart);
-        _urlSet.Add(leftPart);
+        // Every starting URL is marked as seen up front, so one found while crawling from an earlier
+        // starting URL is published in its own place rather than early and at the wrong depth.
+        List<Uri> roots = [];
+        foreach (string uri in uris)
+        {
+            Node start = LeftPart(uri, 0, 0);
+            if (_urlSet.Add(start))
+            {
+                roots.Add(new Uri(start.Url));
+            }
+        }
 
-        await _writer.WriteAsync(leftPart);
+        foreach (Uri root in roots)
+        {
+            await CrawlFrom(root);
+        }
+    }
+
+    /// <summary>
+    /// Crawls breadth-first from <paramref name="root"/>, publishing it and each newly discovered link.
+    /// </summary>
+    /// <param name="root">The normalized URL to start crawling from.</param>
+    private async Task CrawlFrom(Uri root)
+    {
+        _root = root;
+        var start = new Node(root.AbsoluteUri, 0, _orderCounter++);
+        _urls.Enqueue(start);
+
+        await _writer.WriteAsync(start);
 
         while (_urls.Count > 0)
         {
@@ -204,29 +245,6 @@ public class Collector : ICollector
     {
         Uri uri = new(url);
         return new Node(uri.GetLeftPart(UriPartial.Path), depth, order);
-    }
-
-    // Unused pending the --inputFile flag.
-    private static bool IsFilePath(string input)
-    {
-        if (Uri.TryCreate(input, UriKind.Absolute, out Uri? uriResult))
-        {
-            if (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps)
-            {
-                return false;
-            }
-            if (uriResult.IsFile)
-            {
-                return true;
-            }
-        }
-        else if (Path.IsPathRooted(input))
-        {
-            // Handles paths like "C:\Users\..." that might not be formatted as URIs
-            return true;
-        }
-
-        return false;
     }
 
     #endregion

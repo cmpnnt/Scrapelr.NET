@@ -18,22 +18,128 @@ public class CrawlSettingsTests
     [Test]
     public async Task Defaults_MatchCrawlOptionsDefaults()
     {
-        var settings = new CrawlSettings();
+        var settings = new CrawlSettings { Root = Root };
 
-        await Assert.That(settings.MaxDepth).IsEqualTo(1);
-        await Assert.That(settings.PathOnly).IsTrue();
-        await Assert.That(settings.DomainOnly).IsTrue();
+        await Assert.That(settings.ToCrawlOptions()).IsEqualTo(new CrawlOptions());
+    }
+
+    [Test]
+    public async Task EffectiveMaxDepth_DefaultsToOneWithRoot()
+    {
+        var settings = new CrawlSettings { Root = Root };
+
+        await Assert.That(settings.MaxDepth).IsNull();
+        await Assert.That(settings.EffectiveMaxDepth).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task EffectiveMaxDepth_DefaultsToZeroWithInputFile()
+    {
+        var settings = new CrawlSettings { InputFile = "urls.txt" };
+
+        await Assert.That(settings.EffectiveMaxDepth).IsEqualTo(0);
+        await Assert.That(settings.ToCrawlOptions().MaxDepth).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(3)]
+    public async Task EffectiveMaxDepth_UsesExplicitMaxDepth(int maxDepth)
+    {
+        await Assert.That(new CrawlSettings { Root = Root, MaxDepth = maxDepth }.EffectiveMaxDepth).IsEqualTo(maxDepth);
+        await Assert.That(new CrawlSettings { InputFile = "urls.txt", MaxDepth = maxDepth }.EffectiveMaxDepth).IsEqualTo(maxDepth);
     }
 
     [Test]
     [Arguments(null)]
     [Arguments("")]
     [Arguments("  ")]
-    public async Task Validate_MissingRoot_Fails(string? root)
+    public async Task Validate_NeitherRootNorInputFile_Fails(string? value)
     {
-        var settings = new CrawlSettings { Root = root, OutputFile = "out.pdf" };
+        var settings = new CrawlSettings { Root = value, InputFile = value, OutputFile = "out.pdf" };
 
-        await Assert.That(settings.Validate()).IsEqualTo("--root is required.");
+        await Assert.That(settings.Validate()).IsEqualTo("Specify --root or --inputFile.");
+    }
+
+    [Test]
+    public async Task Validate_RootAndInputFile_Fails()
+    {
+        var settings = new CrawlSettings { Root = Root, InputFile = "urls.txt", OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate()).IsEqualTo("Specify --root or --inputFile, not both.");
+    }
+
+    [Test]
+    public async Task Validate_InputFile_Succeeds()
+    {
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, [Root]);
+        var settings = new CrawlSettings { InputFile = urls, OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate()).IsNull();
+    }
+
+    [Test]
+    public async Task Validate_MissingInputFile_Fails()
+    {
+        using var temp = new TempDirectory();
+        string urls = temp.File("missing.txt");
+        var settings = new CrawlSettings { InputFile = urls, OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate()).IsEqualTo($"--inputFile not found: {urls}");
+    }
+
+    [Test]
+    public async Task Validate_InputFileWithoutUrls_Fails()
+    {
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, ["# nothing yet", ""]);
+        var settings = new CrawlSettings { InputFile = urls, OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate()).IsEqualTo($"--inputFile lists no URLs: {urls}");
+    }
+
+    [Test]
+    public async Task Validate_InputFileWithInvalidLine_ReportsLine()
+    {
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, [Root, "docs/relative"]);
+        var settings = new CrawlSettings { InputFile = urls, OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate())
+            .IsEqualTo($"--inputFile {urls}: Line 2 isn't an absolute http or https URL: docs/relative");
+    }
+
+    [Test]
+    public async Task Validate_InputFileIsDirectory_Fails()
+    {
+        using var temp = new TempDirectory();
+        var settings = new CrawlSettings { InputFile = temp.FullName, OutputFile = "out.pdf" };
+
+        await Assert.That(settings.Validate()).IsEqualTo($"--inputFile not found: {temp.FullName}");
+    }
+
+    [Test]
+    public async Task GetStartUrls_WithRoot_ReturnsRoot()
+    {
+        var settings = new CrawlSettings { Root = Root };
+
+        await Assert.That(settings.GetStartUrls()).IsEquivalentTo([Root]);
+    }
+
+    [Test]
+    public async Task GetStartUrls_WithInputFile_ReturnsListedUrlsInOrder()
+    {
+        using var temp = new TempDirectory();
+        string urls = temp.File("urls.txt");
+        await File.WriteAllLinesAsync(urls, ["https://example.com/b", "# skip", "https://example.com/a"]);
+        var settings = new CrawlSettings { InputFile = urls };
+
+        await Assert.That(settings.GetStartUrls())
+            .IsEquivalentTo(["https://example.com/b", "https://example.com/a"], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
 
     [Test]

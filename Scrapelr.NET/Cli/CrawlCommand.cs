@@ -22,38 +22,43 @@ public static class CrawlCommand
     {
         var root = new Option<string>("--root", "-r")
         {
-            Description = "The URL to start crawling from.",
-            Required = true
+            Description = "The URL to start crawling from. Required unless --inputFile is given."
+        };
+        var inputFile = new Option<string>("--inputFile", "-i")
+        {
+            Description = "A text file of URLs to start crawling from, one per line. Blank lines and lines " +
+                          "starting with # are ignored. Use instead of --root."
         };
         var outputFile = new Option<string>("--outputFile", "-o")
         {
             Description = "Where to save the merged PDF. Existing files are overwritten.",
             Required = true
         };
-        var maxDepth = new Option<int>("--maxDepth", "-m")
+        var maxDepth = new Option<int?>("--maxDepth", "-m")
         {
-            Description = "How many links deep to follow from the root page. The root page is depth 0.",
-            DefaultValueFactory = _ => 1
+            Description = "How many links deep to follow from each starting page, which is depth 0. " +
+                          "[default: 1, or 0 with --inputFile]"
         };
         var pathOnly = new Option<bool>("--pathOnly", "-p")
         {
-            Description = "Only follow links beneath the root URL's path. Implies --domainOnly.",
+            Description = "Only follow links beneath the starting URL's path. Implies --domainOnly.",
             DefaultValueFactory = _ => true
         };
         var domainOnly = new Option<bool>("--domainOnly", "-d")
         {
-            Description = "Only follow links on the root URL's scheme, host and port.",
+            Description = "Only follow links on the starting URL's scheme, host and port.",
             DefaultValueFactory = _ => true
         };
 
         var command = new RootCommand("Crawls a website and saves the collected pages as a single PDF.")
         {
-            root, outputFile, maxDepth, pathOnly, domainOnly
+            root, inputFile, outputFile, maxDepth, pathOnly, domainOnly
         };
 
         CrawlSettings Bind(CommandResult result) => new()
         {
             Root = result.GetValue(root),
+            InputFile = result.GetValue(inputFile),
             OutputFile = result.GetValue(outputFile),
             MaxDepth = result.GetValue(maxDepth),
             PathOnly = result.GetValue(pathOnly),
@@ -83,7 +88,7 @@ public static class CrawlCommand
         string outputFile = Path.GetFullPath(settings.OutputFile!);
 
         await using IBrowser browser = await BrowserFactory.Create();
-        await Pipeline.Run(browser, settings.Root!, outputFile, settings.ToCrawlOptions());
+        await Pipeline.Create(browser, settings.ToCrawlOptions()).Run(settings.GetStartUrls(), outputFile);
 
         Console.WriteLine($"Saved {outputFile}");
         return 0;

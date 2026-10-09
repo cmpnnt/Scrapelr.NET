@@ -5,26 +5,56 @@ using Scrapelr.NET.Link;
 namespace Scrapelr.NET;
 
 /// <summary>
-/// Wires a <see cref="Collector"/> to a <see cref="Processor"/> and runs a whole crawl.
+/// Wires an <see cref="ICollector"/> to an <see cref="IProcessor"/> and runs a whole crawl.
 /// </summary>
-public static class Pipeline
+/// <remarks>
+/// Both are created per run around a fresh channel, so they're injected as factories rather than
+/// instances. Use <see cref="Create"/> for the browser-backed defaults.
+/// </remarks>
+public sealed class Pipeline
 {
+    private readonly Func<ChannelWriter<Node>, ICollector> _createCollector;
+    private readonly Func<ChannelReader<Node>, IProcessor> _createProcessor;
+
     /// <summary>
-    /// Crawls from <paramref name="uri"/> and saves every collected page, in crawl order, as a single
-    /// PDF at <paramref name="outputFile"/>. Collection and rendering run concurrently.
+    /// Creates a pipeline from custom collector and processor factories.
+    /// </summary>
+    /// <param name="createCollector">Creates the collector that publishes links to the given writer.</param>
+    /// <param name="createProcessor">Creates the processor that consumes links from the given reader.</param>
+    public Pipeline(
+        Func<ChannelWriter<Node>, ICollector> createCollector,
+        Func<ChannelReader<Node>, IProcessor> createProcessor)
+    {
+        ArgumentNullException.ThrowIfNull(createCollector);
+        ArgumentNullException.ThrowIfNull(createProcessor);
+
+        _createCollector = createCollector;
+        _createProcessor = createProcessor;
+    }
+
+    /// <summary>
+    /// Creates a pipeline that crawls with a <see cref="Collector"/> and renders with a <see cref="Processor"/>.
     /// </summary>
     /// <param name="browser">The browser used to crawl and render. Its lifetime is owned by the caller.</param>
-    /// <param name="uri">The URL to start crawling from.</param>
-    /// <param name="outputFile">Where to save the merged PDF.</param>
     /// <param name="options">Crawl configuration.</param>
-    public static async Task Run(IBrowser browser, string uri, string outputFile, CrawlOptions options)
+    public static Pipeline Create(IBrowser browser, CrawlOptions options) => new(
+        writer => new Collector(browser, writer, options),
+        reader => new Processor(browser, reader));
+
+    /// <summary>
+    /// Crawls from each of <paramref name="uris"/> and saves every collected page, in crawl order, as a
+    /// single PDF at <paramref name="outputFile"/>. Collection and processing run concurrently.
+    /// </summary>
+    /// <param name="uris">The URLs to start crawling from.</param>
+    /// <param name="outputFile">Where to save the merged PDF.</param>
+    public async Task Run(IEnumerable<string> uris, string outputFile)
     {
         var channel = Channel.CreateUnbounded<Node>();
 
-        var collector = new Collector(browser, channel.Writer, options);
-        var processor = new Processor(browser, channel.Reader);
+        ICollector collector = _createCollector(channel.Writer);
+        IProcessor processor = _createProcessor(channel.Reader);
 
-        Task collect = collector.Collect(uri);
+        Task collect = collector.Collect(uris);
         Task process = processor.Process(outputFile);
 
         await Task.WhenAll(collect, process);
