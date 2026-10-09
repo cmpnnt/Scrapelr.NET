@@ -145,6 +145,9 @@ public class Collector : ICollector
         {
             if (!Uri.TryCreate(s, UriKind.Absolute, out Uri? url)) continue;
 
+            // Skip mailto:, javascript: and the like, which can't be rendered as pages
+            if (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps) continue;
+
             string normalized = url.GetLeftPart(UriPartial.Path);
 
             if (_options.FollowDomain && !IsInDomain(root, new Uri(normalized))) continue;
