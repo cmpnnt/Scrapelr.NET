@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="Scrapelr.NET/Scrapelr.NET.csproj" />
+  <Project Path="Scrapelr.NET.Tests/Scrapelr.NET.Tests.csproj" />
 </Solution>

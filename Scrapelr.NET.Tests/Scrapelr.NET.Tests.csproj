@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="NSubstitute" Version="6.2.0" />
+      <PackageReference Include="TUnit" Version="1.73.19" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Scrapelr.NET\Scrapelr.NET.csproj" />
+    </ItemGroup>
+
+</Project>
