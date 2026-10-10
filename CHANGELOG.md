@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.1] - 2026-10-10
+
+### Bug Fixes
+
+- Find the executable by its AssemblyName in tests and the release workflow ([2861982](https://github.com/cmpnnt/Scrapelr.NET/commit/28619820e9d41c39d4f99cacfd4d439bc7f8c822))
+
+### Build
+
+- **Scrapelr.NET:** Shorten name ([57d0193](https://github.com/cmpnnt/Scrapelr.NET/commit/57d0193d14ddc6671ad05230c848a839b051dab5))
+
 ## [0.1.0] - 2026-10-10
 
 ### Features
