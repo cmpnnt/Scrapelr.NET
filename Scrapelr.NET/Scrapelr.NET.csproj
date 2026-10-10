@@ -7,6 +7,12 @@
         <Nullable>enable</Nullable>
         <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
+        <OptimizationPreference>Size</OptimizationPreference>
+        <StackTraceSupport>false</StackTraceSupport>
+        <EventSourceSupport>false</EventSourceSupport>
+        <DebuggerSupport>false</DebuggerSupport>
+        <MetricsSupport>false</MetricsSupport>
+        <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
     </PropertyGroup>
 
     <ItemGroup>
