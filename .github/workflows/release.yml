@@ -1,0 +1,267 @@
+name: Release
+
+# Two ways to cut a release:
+#   - Push a tag such as v1.2.3. The release is built from that tag.
+#   - Run this workflow manually on main. The next version is worked out from the Conventional
+#     Commits since the last tag (see cliff.toml), unless one is given; the tag is created on release.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v1.0.0. Leave empty to derive it from the commits."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PROJECT: Scrapelr.NET/Scrapelr.NET.csproj
+  # The executable that publish produces (the project's AssemblyName).
+  APP_NAME: Scrapelr.NET
+  ARCHIVE_PREFIX: scrapelr
+
+jobs:
+  prepare:
+    name: Version and release notes
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Determine version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            if [[ "$GITHUB_REF_NAME" != "main" ]]; then
+              echo "::error::Manual releases must be run from main, not $GITHUB_REF_NAME."
+              exit 1
+            fi
+            tag="${REQUESTED:-$(git-cliff --bumped-version)}"
+            [[ "$tag" == v* ]] || tag="v$tag"
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::error::Tag $tag already exists. Are there any feat/fix commits since the last release?"
+              exit 1
+            fi
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$tag is not a semantic version tag (vMAJOR.MINOR.PATCH[-PRERELEASE])."
+            exit 1
+          fi
+
+          version="${tag#v}"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (prerelease: $prerelease)"
+
+      - name: Generate release notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            git-cliff --current --strip header --output release-notes.md
+          else
+            git-cliff --unreleased --tag "$TAG" --strip header --output release-notes.md
+          fi
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      # Ubuntu 24.04 blocks the unprivileged user namespaces that Chromium's sandbox needs,
+      # which the end-to-end tests launch.
+      - name: Allow the Chromium sandbox
+        run: echo 0 | sudo tee /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+
+      - name: Test
+        run: dotnet test
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        # Native AOT can't cross-compile between operating systems, so each target builds on its own runner.
+        include:
+          - rid: linux-x64
+            os: ubuntu-24.04
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+          - rid: osx-arm64
+            os: macos-15
+          - rid: win-x64
+            os: windows-2025
+          - rid: win-arm64
+            os: windows-11-arm
+    env:
+      RID: ${{ matrix.rid }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install native AOT prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
+
+      - name: Publish
+        run: |
+          dotnet publish "$PROJECT" \
+            --configuration Release \
+            --runtime "$RID" \
+            --output publish \
+            -p:Version="$VERSION" \
+            -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Smoke test
+        run: |
+          exe="publish/$APP_NAME"
+          [[ "$RID" == win-* ]] && exe="$exe.exe"
+          "$exe" --version
+
+      - name: Stage files
+        id: stage
+        run: |
+          name="$ARCHIVE_PREFIX-$VERSION-$RID"
+          exe="$APP_NAME"
+          [[ "$RID" == win-* ]] && exe="$exe.exe"
+          mkdir -p "dist/$name"
+          cp "publish/$exe" LICENSE "dist/$name/"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Archive (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: dist
+        run: Compress-Archive -Path "${{ steps.stage.outputs.name }}" -DestinationPath "${{ steps.stage.outputs.name }}.zip"
+
+      - name: Archive (tar.gz)
+        if: runner.os != 'Windows'
+        working-directory: dist
+        run: tar -czf "${{ steps.stage.outputs.name }}.tar.gz" "${{ steps.stage.outputs.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.rid }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [prepare, test, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file release-notes.md --target "$GITHUB_SHA")
+          if [[ "$PRERELEASE" == true ]]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh release create "$TAG" "${args[@]}" dist/*
+
+  changelog:
+    name: Update CHANGELOG.md
+    needs: [prepare, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      # Runs after the release job, so the checkout already has the new tag, even on a manual run.
+      - name: Regenerate and commit
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          git-cliff --output CHANGELOG.md
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "CHANGELOG.md is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # cliff.toml skips chore(release) commits, so this never shows up in the changelog or bumps the version.
+          git commit -m "chore(release): update CHANGELOG.md for $TAG [skip ci]"
+          git push origin HEAD:main

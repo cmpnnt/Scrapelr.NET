@@ -1,0 +1,59 @@
+# git-cliff configuration: builds release notes from Conventional Commits.
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = """
+# Changelog\n
+All notable changes to this project are documented in this file.\n
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+    ### {{ group | striptags | trim | upper_first }}
+    {% for commit in commits %}
+        - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+          {% if commit.breaking %}[**breaking**] {% endif %}\
+          {{ commit.message | split(pat="\n") | first | trim | trim_end_matches(pat=".") | upper_first }} \
+          ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/cmpnnt/Scrapelr.NET/commit/{{ commit.id }}))\
+    {% endfor %}
+{% endfor %}\n
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+# Commits that don't follow the convention (e.g. "temporary commit") are left out.
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "oldest"
+# The HTML comments order the groups and are stripped from the output.
+commit_parsers = [
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^feat", group = "<!-- 00 -->Features" },
+  { message = "^fix", group = "<!-- 01 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 02 -->Performance" },
+  { body = ".*security", group = "<!-- 03 -->Security" },
+  { message = "^refactor", group = "<!-- 04 -->Refactoring" },
+  { message = "^doc", group = "<!-- 05 -->Documentation" },
+  { message = "^test", group = "<!-- 06 -->Tests" },
+  { message = "^build", group = "<!-- 07 -->Build" },
+  { message = "^ci", group = "<!-- 08 -->Continuous Integration" },
+  { message = "^revert", group = "<!-- 09 -->Reverts" },
+  { message = "^(chore|style)", group = "<!-- 10 -->Miscellaneous" },
+]
+
+[bump]
+# Below 1.0: feat bumps minor, fix bumps patch, breaking changes bump minor.
+# From 1.0 on, breaking changes bump major as usual.
+features_always_bump_minor = true
+breaking_always_bump_major = false
+initial_tag = "v0.1.0"
