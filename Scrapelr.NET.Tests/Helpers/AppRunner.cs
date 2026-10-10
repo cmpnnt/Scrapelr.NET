@@ -1,15 +1,18 @@
 using System.Diagnostics;
+using Scrapelr.NET.Cli;
 
 namespace Scrapelr.NET.Tests.Helpers;
 
 /// <summary>
-/// Runs the built Scrapelr.NET executable, which the project reference copies next to the tests.
+/// Runs the built app executable, which the project reference copies next to the tests.
 /// </summary>
 internal static class AppRunner
 {
     public static async Task<(int ExitCode, string Output)> Run(string workingDirectory, params string[] args)
     {
-        string app = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Scrapelr.NET.exe" : "Scrapelr.NET");
+        // The executable is named after the app's AssemblyName, so read it rather than hardcoding it.
+        string name = typeof(CrawlCommand).Assembly.GetName().Name!;
+        string app = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? $"{name}.exe" : name);
         var startInfo = new ProcessStartInfo(app, args)
         {
             WorkingDirectory = workingDirectory,

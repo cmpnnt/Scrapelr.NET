@@ -29,8 +29,6 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   PROJECT: Scrapelr.NET/Scrapelr.NET.csproj
-  # The executable that publish produces (the project's AssemblyName).
-  APP_NAME: Scrapelr.NET
   ARCHIVE_PREFIX: scrapelr
 
 jobs:
@@ -163,20 +161,23 @@ jobs:
             -p:Version="$VERSION" \
             -p:IncludeSourceRevisionInInformationalVersion=false
 
-      - name: Smoke test
+      # The executable is named after the project's AssemblyName, so read it rather than hardcoding it.
+      - name: Resolve executable name
         run: |
-          exe="publish/$APP_NAME"
+          exe="$(dotnet msbuild "$PROJECT" -getProperty:AssemblyName | tr -d '\r')"
           [[ "$RID" == win-* ]] && exe="$exe.exe"
-          "$exe" --version
+          echo "EXE=$exe" >> "$GITHUB_ENV"
+          echo "Executable: $exe"
+
+      - name: Smoke test
+        run: '"publish/$EXE" --version'
 
       - name: Stage files
         id: stage
         run: |
           name="$ARCHIVE_PREFIX-$VERSION-$RID"
-          exe="$APP_NAME"
-          [[ "$RID" == win-* ]] && exe="$exe.exe"
           mkdir -p "dist/$name"
-          cp "publish/$exe" LICENSE "dist/$name/"
+          cp "publish/$EXE" LICENSE "dist/$name/"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - name: Archive (zip)
